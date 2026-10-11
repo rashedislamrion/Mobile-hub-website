@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { AdminTableState } from "@/components/admin/AdminTableState";
 
 interface TechnicianRecord {
   id: string;
@@ -64,6 +65,7 @@ export default function TechniciansPage() {
 
   const [data, setData] = useState<TechnicianRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
 
   // Add Technician Modal state
@@ -87,9 +89,11 @@ export default function TechniciansPage() {
   const loadData = useCallback(async () => {
     try {
       setIsLoading(true);
+      setError(null);
       const res = await apiGet<TechnicianRecord[]>("/employees/technicians");
       setData(Array.isArray(res) ? res : []);
     } catch (err: any) {
+      setError(err.message || "Failed to load technicians");
       toast.error(err.message || "Failed to load technicians");
     } finally {
       setIsLoading(false);
@@ -244,23 +248,19 @@ export default function TechniciansPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border text-foreground">
-              {isLoading ? (
-                <tr>
-                  <td colSpan={7} className="p-8 text-center text-muted-foreground">
-                    <div className="flex items-center justify-center gap-2">
-                      <div className="h-5 w-5 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin" />
-                      <span>Loading technicians...</span>
-                    </div>
-                  </td>
-                </tr>
-              ) : filteredData.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="p-8 text-center text-muted-foreground">
-                    No technicians found. Click &quot;Add Technician&quot; to designate team members.
-                  </td>
-                </tr>
-              ) : (
-                filteredData.map((tech) => (
+              <AdminTableState
+                isLoading={isLoading}
+                error={error}
+                isEmpty={filteredData.length === 0}
+                onRetry={loadData}
+                colSpan={7}
+                loadingRows={5}
+                emptyTitle="No records found"
+                emptyDescription="No technicians found. Click Add Technician to designate team members."
+                emptyActionLabel="Add Technician"
+                onEmptyAction={handleOpenAddModal}
+              >
+                {filteredData.map((tech) => (
                   <tr key={tech.id} className="hover:bg-muted/30 transition-colors">
                     {/* ID */}
                     <td className="p-4 font-mono font-bold text-foreground">
@@ -364,8 +364,8 @@ export default function TechniciansPage() {
                       </div>
                     </td>
                   </tr>
-                ))
-              )}
+                ))}
+              </AdminTableState>
             </tbody>
           </table>
         </div>

@@ -14,13 +14,17 @@ if (typeof window !== 'undefined') {
   console.log(`[MobileHubBD Client Init] API Base URL: ${API_BASE_URL}`);
 }
 
+import {
+  getStaffToken as getSessionStaffToken,
+  setStaffToken as setSessionStaffToken,
+  STAFF_TOKEN_KEY as SESSION_STAFF_TOKEN_KEY,
+} from './staff-session';
+
 export const CUSTOMER_TOKEN_KEY = 'novamobile_customer_token';
-export const STAFF_TOKEN_KEY = 'novamobile_staff_token';
+export const STAFF_TOKEN_KEY = SESSION_STAFF_TOKEN_KEY;
 
 let inMemoryCustomerToken: string | null =
   typeof window !== 'undefined' ? localStorage.getItem(CUSTOMER_TOKEN_KEY) : null;
-let inMemoryStaffToken: string | null =
-  typeof window !== 'undefined' ? localStorage.getItem(STAFF_TOKEN_KEY) : null;
 
 let customerUnauthorizedListeners: Array<() => void> = [];
 let staffUnauthorizedListeners: Array<() => void> = [];
@@ -45,21 +49,11 @@ export function setCustomerToken(token: string | null): void {
 }
 
 export function getStaffToken(): string | null {
-  if (!inMemoryStaffToken && typeof window !== 'undefined') {
-    inMemoryStaffToken = localStorage.getItem(STAFF_TOKEN_KEY);
-  }
-  return inMemoryStaffToken;
+  return getSessionStaffToken();
 }
 
 export function setStaffToken(token: string | null): void {
-  inMemoryStaffToken = token;
-  if (typeof window !== 'undefined') {
-    if (token) {
-      localStorage.setItem(STAFF_TOKEN_KEY, token);
-    } else {
-      localStorage.removeItem(STAFF_TOKEN_KEY);
-    }
-  }
+  setSessionStaffToken(token);
 }
 
 export function getEffectiveToken(
@@ -283,6 +277,16 @@ export async function apiFetch<T>(
   const token = getEffectiveToken(endpoint, options.authScope);
   if (token && !headers.has('Authorization')) {
     headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  if (typeof window !== 'undefined') {
+    const isAdmin = window.location.pathname.startsWith('/admin') || options.authScope === 'STAFF';
+    if (isAdmin && !headers.has('x-branch-id')) {
+      const savedBranchId = localStorage.getItem('admin_selected_branch_id');
+      if (savedBranchId) {
+        headers.set('x-branch-id', savedBranchId);
+      }
+    }
   }
 
   const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;

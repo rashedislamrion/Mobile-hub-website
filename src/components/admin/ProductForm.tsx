@@ -22,6 +22,7 @@ import {
   Tag,
   Eye,
   FileText,
+  AlertTriangle,
 } from "lucide-react";
 import {
   Form,
@@ -43,6 +44,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { apiGet, apiPost, apiPatch, getImageUrl } from "@/lib/api-client";
+import { SearchableSelect } from "@/components/ui/searchable-select";
+import { useStaffAuth } from "@/context/AuthContext";
 import { CategoryCheckboxTree } from "./CategoryCheckboxTree";
 import { VariationsGenerator, GeneratedVariant } from "./VariationsGenerator";
 
@@ -140,7 +143,11 @@ export function ProductForm({ initialData, isEdit, productId }: ProductFormProps
 
   // Category selection
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<string[]>(
-    initialData?.categoryId ? [initialData.categoryId] : []
+    Array.isArray((initialData as any)?.categoryIds) && (initialData as any).categoryIds.length > 0
+      ? (initialData as any).categoryIds
+      : initialData?.categoryId
+        ? [initialData.categoryId]
+        : []
   );
 
   // Variations
@@ -175,6 +182,28 @@ export function ProductForm({ initialData, isEdit, productId }: ProductFormProps
   const [removedImageIds, setRemovedImageIds] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const { user } = useStaffAuth();
+  const draftKey = `novamobile_draft_product_${user?.id || "staff"}_${isEdit ? initialData?.id || "edit" : "new"}`;
+  const [savedDraft, setSavedDraft] = useState<any | null>(null);
+  const [showDraftPrompt, setShowDraftPrompt] = useState(false);
+
+  // Check for unsaved draft on mount
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = sessionStorage.getItem(draftKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.savedAt && (Date.now() - parsed.savedAt < 24 * 60 * 60 * 1000)) {
+          setSavedDraft(parsed);
+          setShowDraftPrompt(true);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, [draftKey]);
+
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema) as any,
     defaultValues: {
@@ -205,6 +234,84 @@ export function ProductForm({ initialData, isEdit, productId }: ProductFormProps
       ogImageUrl: initialData?.ogImageUrl || "",
     },
   });
+
+  // Restore Draft
+  const handleRestoreDraft = () => {
+    if (!savedDraft) return;
+    if (savedDraft.values) {
+      form.reset(savedDraft.values);
+    }
+    if (Array.isArray(savedDraft.variants)) {
+      setVariants(savedDraft.variants);
+    }
+    if (Array.isArray(savedDraft.specifications)) {
+      setSpecifications(savedDraft.specifications);
+    }
+    if (Array.isArray(savedDraft.addOns)) {
+      setAddOns(savedDraft.addOns);
+    }
+    if (Array.isArray(savedDraft.selectedCategoryIds)) {
+      setSelectedCategoryIds(savedDraft.selectedCategoryIds);
+    }
+    setShowDraftPrompt(false);
+    toast.success("Unsaved draft restored successfully");
+  };
+
+  const handleDiscardDraft = () => {
+    if (typeof window !== "undefined") {
+      sessionStorage.removeItem(draftKey);
+    }
+    setSavedDraft(null);
+    setShowDraftPrompt(false);
+    toast.info("Draft discarded");
+  };
+
+  // Auto-save in-progress draft (excluding files)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const timer = setTimeout(() => {
+      const values = form.getValues();
+      const isDirty = form.formState.isDirty || variants.length > 0 || addOns.length > 0;
+      if (isDirty) {
+        const payload = {
+          savedAt: Date.now(),
+          values,
+          variants,
+          specifications,
+          addOns,
+          selectedCategoryIds,
+        };
+        sessionStorage.setItem(draftKey, JSON.stringify(payload));
+      }
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [form.watch(), variants, specifications, addOns, selectedCategoryIds, draftKey]);
+
+  // beforeunload safeguard when dirty
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (form.formState.isDirty || variants.length > 0) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [form.formState.isDirty, variants.length]);
+
+  const handleResetForm = () => {
+    form.reset();
+    setVariants([]);
+    setSpecifications([]);
+    setAddOns([]);
+    if (!isEdit) {
+      setSelectedCategoryIds([]);
+    }
+    if (typeof window !== "undefined") {
+      sessionStorage.removeItem(draftKey);
+    }
+    toast.info("Form reset to default state");
+  };
 
   const selectedBrandId = form.watch("brandId");
   const watchName = form.watch("name");
@@ -344,6 +451,12 @@ export function ProductForm({ initialData, isEdit, productId }: ProductFormProps
         toast.success("Product created successfully!");
       }
 
+      // Clear draft on successful save
+      if (typeof window !== "undefined") {
+        sessionStorage.removeItem(draftKey);
+        fetch("/api/revalidate?path=/").catch(() => {});
+      }
+
       router.push("/admin/products");
       router.refresh();
     } catch (err: any) {
@@ -365,6 +478,40 @@ export function ProductForm({ initialData, isEdit, productId }: ProductFormProps
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6 pb-24">
+        {/* Unsaved Draft Restore Banner */}
+        {showDraftPrompt && savedDraft && (
+          <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-center gap-2.5">
+              <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0" />
+              <div>
+                <h4 className="text-sm font-bold text-amber-900">Restore unsaved draft?</h4>
+                <p className="text-xs text-amber-700">
+                  You have an unsaved draft from {new Date(savedDraft.savedAt).toLocaleTimeString()}. Would you like to restore your progress?
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                onClick={handleRestoreDraft}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs h-8 cursor-pointer"
+              >
+                Restore Draft
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={handleDiscardDraft}
+                className="border-slate-300 text-slate-700 text-xs h-8 cursor-pointer"
+              >
+                Discard
+              </Button>
+            </div>
+          </div>
+        )}
+
         {/* Pill-style Tab Bar */}
         <div className="flex items-center gap-1.5 p-1.5 bg-slate-100 rounded-xl max-w-fit border border-slate-200 overflow-x-auto">
           {tabs.map((tab) => {
@@ -387,7 +534,7 @@ export function ProductForm({ initialData, isEdit, productId }: ProductFormProps
         </div>
 
         {/* Tab 1: Product Info */}
-        {activeTab === "product-info" && (
+        <div className={activeTab === "product-info" ? "block" : "hidden"}>
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             {/* Left / Main Column */}
             <div className="lg:col-span-8 space-y-5">
@@ -450,26 +597,19 @@ export function ProductForm({ initialData, isEdit, productId }: ProductFormProps
                         <FormLabel className="text-xs font-semibold text-slate-700">
                           Select Brand
                         </FormLabel>
-                        <Select
-                          value={field.value || ""}
-                          onValueChange={(val) => {
-                            field.onChange(val);
-                            form.setValue("seriesId", "");
-                          }}
-                        >
-                          <FormControl>
-                            <SelectTrigger className="h-10 text-sm">
-                              <SelectValue placeholder="Select Brand..." />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            {brands.map((b) => (
-                              <SelectItem key={b.id} value={b.id}>
-                                {b.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <FormControl>
+                          <SearchableSelect
+                            options={brands.map((b) => ({ value: b.id, label: b.name }))}
+                            value={field.value || ""}
+                            onChange={(val) => {
+                              field.onChange(val);
+                              form.setValue("seriesId", "");
+                            }}
+                            placeholder="Select Brand..."
+                            searchPlaceholder="Search brand (e.g. Oppo, Apple)..."
+                            className="w-full"
+                          />
+                        </FormControl>
                         <FormMessage className="text-xs" />
                       </FormItem>
                     )}
@@ -483,32 +623,23 @@ export function ProductForm({ initialData, isEdit, productId }: ProductFormProps
                         <FormLabel className="text-xs font-semibold text-slate-700">
                           Select Series
                         </FormLabel>
-                        <Select
-                          value={field.value || ""}
-                          onValueChange={field.onChange}
-                          disabled={!selectedBrandId || filteredSeries.length === 0}
-                        >
-                          <FormControl>
-                            <SelectTrigger className="h-10 text-sm">
-                              <SelectValue
-                                placeholder={
-                                  !selectedBrandId
-                                    ? "Select brand first"
-                                    : filteredSeries.length === 0
-                                    ? "No series available"
-                                    : "Select Series..."
-                                }
-                              />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            {filteredSeries.map((s) => (
-                              <SelectItem key={s.id} value={s.id}>
-                                {s.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <FormControl>
+                          <SearchableSelect
+                            options={filteredSeries.map((s) => ({ value: s.id, label: s.name }))}
+                            value={field.value || ""}
+                            onChange={field.onChange}
+                            disabled={!selectedBrandId || filteredSeries.length === 0}
+                            placeholder={
+                              !selectedBrandId
+                                ? "Select brand first"
+                                : filteredSeries.length === 0
+                                ? "No series available"
+                                : "Select Series..."
+                            }
+                            searchPlaceholder="Search series..."
+                            className="w-full"
+                          />
+                        </FormControl>
                         <FormMessage className="text-xs" />
                       </FormItem>
                     )}
@@ -525,20 +656,20 @@ export function ProductForm({ initialData, isEdit, productId }: ProductFormProps
                         <FormLabel className="text-xs font-semibold text-slate-700">
                           Select Unit
                         </FormLabel>
-                        <Select value={field.value || ""} onValueChange={field.onChange}>
-                          <FormControl>
-                            <SelectTrigger className="h-10 text-sm">
-                              <SelectValue placeholder="Select Unit (Pcs, Box, Set)..." />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            {units.map((u) => (
-                              <SelectItem key={u.id} value={u.id}>
-                                {u.name} {u.shortCode ? `(${u.shortCode})` : ""}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <FormControl>
+                          <SearchableSelect
+                            options={units.map((u) => ({
+                              value: u.id,
+                              label: u.name,
+                              secondaryText: u.shortCode ? `(${u.shortCode})` : undefined,
+                            }))}
+                            value={field.value || ""}
+                            onChange={field.onChange}
+                            placeholder="Select Unit (Pcs, Box, Set)..."
+                            searchPlaceholder="Search unit..."
+                            className="w-full"
+                          />
+                        </FormControl>
                         <FormMessage className="text-xs" />
                       </FormItem>
                     )}
@@ -850,10 +981,10 @@ export function ProductForm({ initialData, isEdit, productId }: ProductFormProps
               />
             </div>
           </div>
-        )}
+        </div>
 
         {/* Tab 2: General Information */}
-        {activeTab === "general-info" && (
+        <div className={activeTab === "general-info" ? "block" : "hidden"}>
           <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-5">
             <h3 className="text-sm font-bold text-slate-800 border-b border-slate-100 pb-3 flex items-center gap-2">
               <FileText className="w-4 h-4 text-emerald-600" />
@@ -921,10 +1052,10 @@ export function ProductForm({ initialData, isEdit, productId }: ProductFormProps
               )}
             />
           </div>
-        )}
+        </div>
 
         {/* Tab 3: Variations */}
-        {activeTab === "variations" && (
+        <div className={activeTab === "variations" ? "block" : "hidden"}>
           <VariationsGenerator
             baseSku={watchCode || "PROD"}
             defaultBuyingPrice={watchBuyingPrice}
@@ -936,10 +1067,10 @@ export function ProductForm({ initialData, isEdit, productId }: ProductFormProps
             brandName={selectedBrandName}
             condition={watchCondition}
           />
-        )}
+        </div>
 
         {/* Tab 4: Optional Add-ons */}
-        {activeTab === "add-ons" && (
+        <div className={activeTab === "add-ons" ? "block" : "hidden"}>
           <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
@@ -1017,10 +1148,10 @@ export function ProductForm({ initialData, isEdit, productId }: ProductFormProps
               </div>
             )}
           </div>
-        )}
+        </div>
 
         {/* Tab 5: SEO Information */}
-        {activeTab === "seo" && (
+        <div className={activeTab === "seo" ? "block" : "hidden"}>
           <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-5">
             <h3 className="text-sm font-bold text-slate-800 border-b border-slate-100 pb-3 flex items-center gap-2">
               <Search className="w-4 h-4 text-emerald-600" />
@@ -1091,7 +1222,7 @@ export function ProductForm({ initialData, isEdit, productId }: ProductFormProps
               )}
             />
           </div>
-        )}
+        </div>
 
         {/* Sticky Action Footer */}
         <div className="fixed bottom-0 left-0 right-0 z-30 bg-white/95 backdrop-blur border-t border-slate-200 py-3 px-6 shadow-lg flex items-center justify-between">
@@ -1103,7 +1234,7 @@ export function ProductForm({ initialData, isEdit, productId }: ProductFormProps
             <Button
               type="button"
               variant="outline"
-              onClick={() => form.reset()}
+              onClick={handleResetForm}
               className="text-xs h-9 border-slate-300 text-slate-700 gap-1.5"
             >
               <RotateCcw className="w-3.5 h-3.5" />

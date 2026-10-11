@@ -159,7 +159,9 @@ export default function HelpNotesPage() {
         {/* Pagination Footer matching reference */}
         <div className="flex items-center justify-between px-6 py-4 border-t border-slate-100 text-xs text-slate-500">
           <div>
-            Showing {from} to {to} of {meta.total} results
+            {meta.total === 0
+              ? "Showing 0 results"
+              : `Showing ${from} to ${to} of ${meta.total} results`}
           </div>
           <div className="flex items-center gap-2">
             <Button

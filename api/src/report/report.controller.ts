@@ -309,11 +309,14 @@ export class ReportController {
         'Access denied: Technicians can only view their own individual servicing reports',
       );
     }
-    return this.reportService.getTechnicianPerformanceReport({
-      branch,
-      dateFrom,
-      dateTo,
-    });
+    return this.reportService.getTechnicianPerformanceReport(
+      {
+        branch,
+        dateFrom,
+        dateTo,
+      },
+      user,
+    );
   }
 
   @Get('technician-profit')
@@ -333,11 +336,14 @@ export class ReportController {
         'Access denied: Technicians can only view their own individual servicing reports',
       );
     }
-    return this.reportService.getTechnicianProfitReport({
-      branch,
-      dateFrom,
-      dateTo,
-    });
+    return this.reportService.getTechnicianProfitReport(
+      {
+        branch,
+        dateFrom,
+        dateTo,
+      },
+      user,
+    );
   }
 
   @Get('shopwise')
@@ -361,15 +367,19 @@ export class ReportController {
     action: PermissionAction.READ,
   })
   getMarketingFeeReport(
+    @CurrentUser() user: JwtPayload,
     @Query('branch') branch?: string,
     @Query('dateFrom') dateFrom?: string,
     @Query('dateTo') dateTo?: string,
   ) {
-    return this.reportService.getMarketingFeeReport({
-      branch,
-      dateFrom,
-      dateTo,
-    });
+    return this.reportService.getMarketingFeeReport(
+      {
+        branch,
+        dateFrom,
+        dateTo,
+      },
+      user,
+    );
   }
 
   @Get('expense')
@@ -461,6 +471,7 @@ export class ReportController {
     action: PermissionAction.READ,
   })
   getProductStockReport(
+    @CurrentUser() user: JwtPayload,
     @Query('inStockOnly') inStockOnly?: string,
     @Query('branch') branch?: string,
     @Query('brand') brand?: string,
@@ -469,15 +480,18 @@ export class ReportController {
     @Query('color') color?: string,
     @Query('search') search?: string,
   ) {
-    return this.reportService.getProductStockReport({
-      inStockOnly,
-      branch,
-      brand,
-      category,
-      quality,
-      color,
-      search,
-    });
+    return this.reportService.getProductStockReport(
+      {
+        inStockOnly,
+        branch,
+        brand,
+        category,
+        quality,
+        color,
+        search,
+      },
+      user,
+    );
   }
 
   @Get('courier')

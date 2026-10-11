@@ -21,6 +21,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { AdminSidebar } from "./AdminSidebar";
+import { AdminPageSearchDialog } from "./AdminPageSearchDialog";
 import { useAdminPage } from "@/contexts/AdminPageContext";
 import { useStaffAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
@@ -46,10 +47,32 @@ export function AdminTopbar() {
     selectedBranchName,
     selectBranch,
     branches,
+    isGlobal,
+    isSingleBranch,
   } = useAdminPage();
   const { user, logout } = useStaffAuth();
   const router = useRouter();
   const [activeTheme, setActiveTheme] = useState("Emerald");
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+
+  // Keyboard shortcut: Ctrl+K, Cmd+K, or "/"
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") ||
+        e.key === "/"
+      ) {
+        const activeTag = document.activeElement?.tagName;
+        if (activeTag === "INPUT" || activeTag === "TEXTAREA") {
+          if (e.key === "/") return; // Don't hijack normal typing in inputs
+        }
+        e.preventDefault();
+        setIsSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   useEffect(() => {
     const savedTheme = localStorage.getItem("admin_theme_name");
@@ -113,10 +136,29 @@ export function AdminTopbar() {
         </div>
       </div>
 
-      <div className="flex items-center gap-3 md:gap-4">
-        
-        {/* Search Icon */}
-        <Button variant="ghost" size="icon" className="text-slate-600 hidden sm:flex">
+      <div className="flex items-center gap-2 md:gap-3">
+        {/* Page Search Trigger: Desktop */}
+        <button
+          type="button"
+          onClick={() => setIsSearchOpen(true)}
+          className="hidden sm:flex items-center gap-2.5 h-9 px-3.5 rounded-full border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-500 text-xs font-medium transition-all shadow-xs"
+          title="Search admin pages (Ctrl+K or /)"
+        >
+          <Search className="w-3.5 h-3.5 text-slate-400" />
+          <span className="text-slate-600">Search pages...</span>
+          <kbd className="font-mono text-[10px] bg-white border border-slate-200 rounded px-1.5 py-0.5 text-slate-400 font-semibold shadow-2xs">
+            ⌘K
+          </kbd>
+        </button>
+
+        {/* Page Search Trigger: Mobile */}
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => setIsSearchOpen(true)}
+          className="sm:hidden text-slate-600"
+          title="Search admin pages"
+        >
           <Search className="w-5 h-5" />
         </Button>
         
@@ -137,42 +179,53 @@ export function AdminTopbar() {
 
         {/* Branch Selector */}
         <div className="hidden md:block">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" className="h-9 rounded-full border-slate-200 text-slate-700 font-normal">
-                <Store className="w-4 h-4 mr-2 text-emerald-600" />
-                <span className="truncate max-w-[150px]">{selectedBranchName || "All Branches"}</span>
-                <ChevronDown className="w-4 h-4 ml-2 text-slate-400" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-[280px]">
-              <DropdownMenuLabel>Select Branch Scope</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem 
-                className={!selectedBranchId ? 'bg-emerald-50 text-emerald-700 font-semibold' : ''}
-                onClick={() => selectBranch("", "All Branches")}
-              >
-                🌐 All Branches (Global)
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              {branches.length > 0 ? (
-                branches.map(branch => (
-                  <DropdownMenuItem 
-                    key={branch.id} 
-                    className={selectedBranchId === branch.id ? 'bg-emerald-50 text-emerald-700 font-medium' : ''}
-                    onClick={() => selectBranch(branch.id, branch.name)}
-                  >
-                    <Store className="w-3.5 h-3.5 mr-2 text-slate-400" />
-                    {branch.name}
+          {isSingleBranch ? (
+            <div className="h-9 px-3.5 rounded-full border border-slate-200 bg-slate-50 text-slate-700 text-xs font-medium flex items-center gap-2 cursor-default" title="Assigned Branch Scope">
+              <Store className="w-3.5 h-3.5 text-emerald-600" />
+              <span className="truncate max-w-[150px] font-semibold">{selectedBranchName || "Single Branch"}</span>
+            </div>
+          ) : (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" className="h-9 rounded-full border-slate-200 text-slate-700 font-normal">
+                  <Store className="w-4 h-4 mr-2 text-emerald-600" />
+                  <span className="truncate max-w-[150px]">{selectedBranchName || (isGlobal ? "All Branches" : "Select Branch")}</span>
+                  <ChevronDown className="w-4 h-4 ml-2 text-slate-400" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-[280px]">
+                <DropdownMenuLabel>Select Branch Scope</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {isGlobal && (
+                  <>
+                    <DropdownMenuItem 
+                      className={!selectedBranchId ? 'bg-emerald-50 text-emerald-700 font-semibold' : ''}
+                      onClick={() => selectBranch("", "All Branches")}
+                    >
+                      🌐 All Branches (Global)
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                  </>
+                )}
+                {branches.length > 0 ? (
+                  branches.map(branch => (
+                    <DropdownMenuItem 
+                      key={branch.id} 
+                      className={selectedBranchId === branch.id ? 'bg-emerald-50 text-emerald-700 font-medium' : ''}
+                      onClick={() => selectBranch(branch.id, branch.name)}
+                    >
+                      <Store className="w-3.5 h-3.5 mr-2 text-slate-400" />
+                      {branch.name}
+                    </DropdownMenuItem>
+                  ))
+                ) : (
+                  <DropdownMenuItem className="text-slate-400 text-xs">
+                    No branches available
                   </DropdownMenuItem>
-                ))
-              ) : (
-                <DropdownMenuItem className="text-slate-400 text-xs">
-                  Loading branches...
-                </DropdownMenuItem>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
 
         {/* Profile Dropdown */}
@@ -242,6 +295,8 @@ export function AdminTopbar() {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+
+      <AdminPageSearchDialog open={isSearchOpen} onOpenChange={setIsSearchOpen} />
     </header>
   );
 }

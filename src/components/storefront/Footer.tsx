@@ -1,12 +1,15 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useEffect, useState } from "react";
 import { 
   Phone, Mail, MapPin, 
   ShieldCheck, Truck, RefreshCw, Headphones, MessageCircle, Share2 
 } from "lucide-react";
 import { apiGet } from "@/lib/api-client";
+import { OFFICIAL_CONTACT } from "@/config/contact";
+import { SHOW_PAYMENT_STRIP } from "@/config/site";
 
 function FacebookIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
@@ -40,13 +43,21 @@ function LinkedinIcon(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
+function TiktokIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" {...props}>
+      <path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.98-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.24 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z" />
+    </svg>
+  );
+}
+
 const platformIcons: Record<string, React.ReactNode> = {
   FACEBOOK: <FacebookIcon className="w-5 h-5" />,
   INSTAGRAM: <InstagramIcon className="w-5 h-5" />,
   YOUTUBE: <YoutubeIcon className="w-5 h-5" />,
   LINKEDIN: <LinkedinIcon className="w-5 h-5" />,
   WHATSAPP: <MessageCircle className="w-5 h-5" />,
-  TIKTOK: <span className="font-bold text-xs">TT</span>,
+  TIKTOK: <TiktokIcon className="w-5 h-5" />,
 };
 
 export function Footer() {
@@ -149,19 +160,20 @@ export function Footer() {
                 <span>
                   {supportContactItem?.extraData?.phone ||
                     footerSettings?.supportPhone ||
-                    "01602670922"}
+                    OFFICIAL_CONTACT.phone.display}
                 </span>
               </div>
               <div className="flex items-center gap-3 text-sm">
                 <Mail className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-                <span>{footerSettings?.supportEmail || "mobilehubbd2@gmail.com"}</span>
+                <span>{footerSettings?.supportEmail || OFFICIAL_CONTACT.email}</span>
               </div>
-              {supportContactItem?.extraData?.availableTime && (
-                <div className="flex items-center gap-3 text-xs text-slate-400">
-                  <span className="font-medium text-slate-300">Support Hours:</span>
-                  <span>{supportContactItem.extraData.availableTime}</span>
-                </div>
-              )}
+              <div className="flex items-center gap-3 text-xs text-slate-400">
+                <span className="font-medium text-slate-300">Support Hours:</span>
+                <span>
+                  {supportContactItem?.extraData?.availableTime ||
+                    OFFICIAL_CONTACT.openingHours.display}
+                </span>
+              </div>
             </div>
 
             {/* Social Links */}
@@ -177,6 +189,7 @@ export function Footer() {
                       rel="noreferrer"
                       className="w-9 h-9 rounded-lg bg-slate-800 text-slate-300 hover:bg-emerald-600 hover:text-white flex items-center justify-center transition-colors"
                       title={social.platform}
+                      aria-label={social.platform ? `${social.platform} Link` : "Social Link"}
                     >
                       {platformIcons[social.platform] || <MessageCircle className="w-4 h-4" />}
                     </a>
@@ -240,45 +253,50 @@ export function Footer() {
           </div>
 
           {/* Outlets / Branches Column */}
-          <div className="space-y-3">
-            <h4 className="text-sm font-bold uppercase tracking-wider text-white">
-              {branchCol?.title || "Our Outlets"}
-            </h4>
-            <ul className="space-y-3 text-sm text-slate-400">
-              {branchCol?.items && branchCol.items.length > 0 ? (
-                branchCol.items.map((item: any) => (
-                  <li key={item.id} className="text-xs">
-                    <span className="font-semibold text-slate-200 block">
-                      {item.extraData?.name || item.navigationLabel}
-                    </span>
-                    {item.extraData?.location && (
-                      <span className="text-slate-400 truncate block">{item.extraData.location}</span>
-                    )}
-                    {item.extraData?.phone && (
-                      <span className="text-emerald-400 text-[11px] block">{item.extraData.phone}</span>
-                    )}
-                  </li>
-                ))
-              ) : branches.length > 0 ? (
-                branches.slice(0, 4).map((b) => (
-                  <li key={b.id} className="text-xs">
-                    <span className="font-semibold text-slate-200 block">{b.name}</span>
-                    <span className="text-slate-400 truncate block">{b.address}</span>
-                  </li>
-                ))
-              ) : (
-                <>
-                  <li className="text-xs">
-                    <span className="font-semibold text-slate-200 block">Eastern Plaza (Flagship)</span>
-                    <span className="text-slate-400 block">2/13 Eastern Plaza Shopping Complex, Hatirpool, Dhaka 1205</span>
-                    <span className="text-emerald-400 text-[11px] block">01602670922</span>
-                  </li>
-                </>
-              )}
-            </ul>
-          </div>
+          {branches.filter((b: any) => (b.status === "ACTIVE" || !b.status) && b.name).length > 0 && (
+            <div className="space-y-3">
+              <h4 className="text-sm font-bold uppercase tracking-wider text-white">
+                {branchCol?.title || "Our Outlets"}
+              </h4>
+              <ul className="space-y-3 text-sm text-slate-400">
+                {branches
+                  .filter((b: any) => (b.status === "ACTIVE" || !b.status) && b.name)
+                  .slice(0, 4)
+                  .map((b: any) => (
+                    <li key={b.id} className="text-xs">
+                      <span className="font-semibold text-slate-200 block">{b.name}</span>
+                      {b.address && (
+                        <span className="text-slate-400 truncate block">{b.address}{b.city ? `, ${b.city}` : ""}</span>
+                      )}
+                      {b.phone && (
+                        <span className="text-emerald-400 text-[11px] block">{b.phone}</span>
+                      )}
+                    </li>
+                  ))}
+              </ul>
+            </div>
+          )}
         </div>
       </div>
+
+      {/* Payment Methods Strip */}
+      {SHOW_PAYMENT_STRIP && (
+        <div className="container mx-auto px-4 my-8">
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200/20 p-2 sm:p-3 overflow-x-auto">
+            <div className="min-w-[900px] flex items-center justify-center">
+              <Image
+                src="/images/payments/pay-with-strip.png"
+                alt="Supported payment methods: bKash, Nagad, Rocket, Upay, Visa, Mastercard, AMEX, Internet Banking - Verified by SSLCOMMERZ"
+                width={2708}
+                height={138}
+                className="w-full h-auto object-contain select-none"
+                sizes="(max-width: 1280px) 100vw, 1200px"
+                loading="lazy"
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Copyright Strip */}
       <div className="border-t border-slate-800 py-6 bg-slate-950">

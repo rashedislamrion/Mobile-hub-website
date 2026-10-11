@@ -165,6 +165,17 @@ export default function PosTerminalPage() {
   // Cart State
   const [cart, setCart] = useState<CartItem[]>([]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      if (cart.length > 0) {
+        sessionStorage.setItem("novamobile_pos_cart_count", String(cart.length));
+      } else {
+        sessionStorage.removeItem("novamobile_pos_cart_count");
+      }
+    } catch {}
+  }, [cart]);
+
   // POS Order Date (Backdating / Historical Sale Recording)
   const [orderDateMode, setOrderDateMode] = useState<"TODAY" | "CUSTOM">("TODAY");
   const [orderSaleDate, setOrderSaleDate] = useState<string>(

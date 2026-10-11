@@ -10,17 +10,26 @@ import {
   RejectExchangeDto,
 } from './dto/create-exchange.dto';
 import { ExchangeStatus, Prisma } from '@prisma/client';
+import { BranchScopeService } from '../common/branch/branch-scope.service';
+import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 
 @Injectable()
 export class ExchangeService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private branchScopeService: BranchScopeService,
+  ) {}
 
-  async findAll(query: {
-    status?: ExchangeStatus;
-    search?: string;
-    page?: number;
-    limit?: number;
-  }) {
+  async findAll(
+    query: {
+      status?: ExchangeStatus;
+      branch?: string;
+      search?: string;
+      page?: number;
+      limit?: number;
+    },
+    user?: JwtPayload,
+  ) {
     const page = Math.max(1, Number(query.page) || 1);
     const limit = Math.max(1, Math.min(100, Number(query.limit) || 20));
     const skip = (page - 1) * limit;
@@ -28,6 +37,14 @@ export class ExchangeService {
     const where: Prisma.ExchangeWhereInput = {};
 
     if (query.status) where.status = query.status;
+
+    const branchFilter = await this.branchScopeService.getBranchFilter(
+      user,
+      query.branch,
+    );
+    if (branchFilter !== undefined) {
+      where.order = { branchId: branchFilter };
+    }
 
     if (query.search?.trim()) {
       const s = query.search.trim();
@@ -73,7 +90,7 @@ export class ExchangeService {
     };
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, user?: JwtPayload) {
     const exchange = await this.prisma.exchange.findUnique({
       where: { id },
       include: {
@@ -95,6 +112,13 @@ export class ExchangeService {
 
     if (!exchange) throw new NotFoundException(`Exchange "${id}" not found.`);
 
+    if (user) {
+      await this.branchScopeService.validateBranchAccess(
+        user,
+        exchange.order.branchId,
+      );
+    }
+
     // Fetch new product / variant details
     const newProduct = await this.prisma.product.findUnique({
       where: { id: exchange.newProductId },
@@ -111,13 +135,17 @@ export class ExchangeService {
     };
   }
 
-  async create(dto: CreateExchangeDto) {
+  async create(dto: CreateExchangeDto, user?: JwtPayload) {
     const order = await this.prisma.order.findUnique({
       where: { id: dto.orderId },
       include: { items: true },
     });
     if (!order)
       throw new NotFoundException(`Order "${dto.orderId}" not found.`);
+
+    if (user) {
+      await this.branchScopeService.validateBranchAccess(user, order.branchId);
+    }
 
     const oldOrderItem = order.items.find((oi) => oi.id === dto.oldOrderItemId);
     if (!oldOrderItem)
@@ -164,7 +192,9 @@ export class ExchangeService {
     });
   }
 
-  async approve(id: string) {
+  async approve(id: string, user?: JwtPayload) {
+    await this.findOne(id, user);
+
     const exchange = await this.prisma.exchange.findUnique({ where: { id } });
     if (!exchange) throw new NotFoundException(`Exchange "${id}" not found.`);
     if (exchange.status !== ExchangeStatus.REQUESTED) {
@@ -180,7 +210,9 @@ export class ExchangeService {
     });
   }
 
-  async itemReceived(id: string) {
+  async itemReceived(id: string, user?: JwtPayload) {
+    await this.findOne(id, user);
+
     const exchange = await this.prisma.exchange.findUnique({
       where: { id },
       include: { oldOrderItem: true },
@@ -209,7 +241,9 @@ export class ExchangeService {
     });
   }
 
-  async complete(id: string) {
+  async complete(id: string, user?: JwtPayload) {
+    await this.findOne(id, user);
+
     const exchange = await this.prisma.exchange.findUnique({
       where: { id },
       include: { oldOrderItem: true },
@@ -247,7 +281,9 @@ export class ExchangeService {
     });
   }
 
-  async reject(id: string, dto?: RejectExchangeDto) {
+  async reject(id: string, dto?: RejectExchangeDto, user?: JwtPayload) {
+    await this.findOne(id, user);
+
     const exchange = await this.prisma.exchange.findUnique({ where: { id } });
     if (!exchange) throw new NotFoundException(`Exchange "${id}" not found.`);
     if (exchange.status === ExchangeStatus.COMPLETED) {

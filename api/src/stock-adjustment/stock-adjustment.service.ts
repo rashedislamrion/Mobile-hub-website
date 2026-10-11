@@ -12,9 +12,14 @@ import {
 import { Prisma, StockAdjustmentType } from '@prisma/client';
 import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 
+import { BranchScopeService } from '../common/branch/branch-scope.service';
+
 @Injectable()
 export class StockAdjustmentService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private branchScopeService: BranchScopeService,
+  ) {}
 
   private async resolveBranchId(
     branchParam?: string,
@@ -54,10 +59,14 @@ export class StockAdjustmentService {
 
     const where: Prisma.StockAdjustmentWhereInput = {};
 
-    const branchFilter = query?.branchId || query?.branch;
-    if (branchFilter) {
-      const resolved = await this.resolveBranchId(branchFilter);
-      if (resolved) where.branchId = resolved;
+    const requestedBranch = query?.branchId || query?.branch;
+    const resolvedBranch = await this.resolveBranchId(requestedBranch);
+    const branchFilter = await this.branchScopeService.getBranchFilter(
+      user,
+      resolvedBranch,
+    );
+    if (branchFilter !== undefined) {
+      where.branchId = branchFilter;
     }
 
     if (query?.type) {
@@ -140,7 +149,7 @@ export class StockAdjustmentService {
     };
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, user?: JwtPayload) {
     const adjustment = await this.prisma.stockAdjustment.findUnique({
       where: { id },
       include: {
@@ -157,11 +166,22 @@ export class StockAdjustmentService {
       );
     }
 
+    if (user) {
+      await this.branchScopeService.validateBranchAccess(
+        user,
+        adjustment.branchId,
+      );
+    }
+
     return adjustment;
   }
 
   async create(dto: CreateStockAdjustmentDto, user?: JwtPayload) {
-    const branchId = (await this.resolveBranchId(dto.branchId)) || dto.branchId;
+    const requestedBranch = (await this.resolveBranchId(dto.branchId)) || dto.branchId;
+    const branchId = await this.branchScopeService.determineCreateBranchId(
+      user,
+      requestedBranch,
+    );
     const branch = await this.prisma.branch.findUnique({
       where: { id: branchId },
     });
@@ -290,7 +310,11 @@ export class StockAdjustmentService {
   }
 
   async createBatch(dto: CreateBatchStockAdjustmentDto, user?: JwtPayload) {
-    const branchId = (await this.resolveBranchId(dto.branchId)) || dto.branchId;
+    const requestedBranch = (await this.resolveBranchId(dto.branchId)) || dto.branchId;
+    const branchId = await this.branchScopeService.determineCreateBranchId(
+      user,
+      requestedBranch,
+    );
     const branch = await this.prisma.branch.findUnique({
       where: { id: branchId },
     });

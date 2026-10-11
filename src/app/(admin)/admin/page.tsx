@@ -132,8 +132,10 @@ export default function AdminDashboardPage() {
   const { setTitle, setBadge, dateFilter, selectedBranchId, selectedBranchName } = useAdminPage();
   const [data, setData] = useState<DashboardData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
+    setIsMounted(true);
     setTitle("Dashboard");
     setBadge("Website");
   }, [setTitle, setBadge]);
@@ -446,6 +448,7 @@ export default function AdminDashboardPage() {
             label="Payroll + Salary"
             value={`৳ ${(kpi.payrollSalary ?? 0).toLocaleString()}`}
             colorTint="purple"
+            subtitle={dateFilter ? `Period: ${dateFilter}` : "Gross Liability"}
           />
         </div>
       </div>
@@ -457,35 +460,41 @@ export default function AdminDashboardPage() {
           <span className="text-xs text-slate-500">{selectedBranchName}</span>
         </CardHeader>
         <CardContent className="p-4 h-[350px]">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-              <defs>
-                <linearGradient id="colorOrder" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
-                  <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-                </linearGradient>
-                <linearGradient id="colorIncome" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
-                  <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
-                </linearGradient>
-                <linearGradient id="colorExpense" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#ef4444" stopOpacity={0.3}/>
-                  <stop offset="95%" stopColor="#ef4444" stopOpacity={0}/>
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-              <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#64748b' }} dy={10} />
-              <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#64748b' }} tickFormatter={(value) => `৳${value >= 1000 ? `${value / 1000}k` : value}`} />
-              <Tooltip 
-                contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)' }}
-                formatter={(value: unknown) => [`৳ ${Number(value).toLocaleString()}`, undefined]}
-              />
-              <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '12px', paddingBottom: '10px' }} />
-              <Area type="monotone" dataKey="order" name="Order Count" stroke="#10b981" strokeWidth={3} fillOpacity={1} fill="url(#colorOrder)" />
-              <Area type="monotone" dataKey="income" name="Income (৳)" stroke="#3b82f6" strokeWidth={3} fillOpacity={1} fill="url(#colorIncome)" />
-              <Area type="monotone" dataKey="expense" name="Expense (৳)" stroke="#ef4444" strokeWidth={3} fillOpacity={1} fill="url(#colorExpense)" />
-            </AreaChart>
-          </ResponsiveContainer>
+          {isMounted ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="colorOrder" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
+                    <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                  </linearGradient>
+                  <linearGradient id="colorIncome" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
+                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                  </linearGradient>
+                  <linearGradient id="colorExpense" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#ef4444" stopOpacity={0.3}/>
+                    <stop offset="95%" stopColor="#ef4444" stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#64748b' }} dy={10} />
+                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#64748b' }} tickFormatter={(value) => `৳${value >= 1000 ? `${value / 1000}k` : value}`} />
+                <Tooltip 
+                  contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)' }}
+                  formatter={(value: unknown) => [`৳ ${Number(value).toLocaleString()}`, undefined]}
+                />
+                <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '12px', paddingBottom: '10px' }} />
+                <Area type="monotone" dataKey="order" name="Order Count" stroke="#10b981" strokeWidth={3} fillOpacity={1} fill="url(#colorOrder)" />
+                <Area type="monotone" dataKey="income" name="Income (৳)" stroke="#3b82f6" strokeWidth={3} fillOpacity={1} fill="url(#colorIncome)" />
+                <Area type="monotone" dataKey="expense" name="Expense (৳)" stroke="#ef4444" strokeWidth={3} fillOpacity={1} fill="url(#colorExpense)" />
+              </AreaChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-slate-400 text-sm">
+              Loading summary chart...
+            </div>
+          )}
         </CardContent>
       </Card>
 

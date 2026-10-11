@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
-import { getAuthToken, API_BASE_URL } from "@/lib/api-client";
+import { apiPost } from "@/lib/api-client";
 
 export default function CreateAdPage() {
   const router = useRouter();
@@ -56,19 +56,7 @@ export default function CreateAdPage() {
       formData.append("status", "ACTIVE");
       formData.append("image", file);
 
-      const token = getAuthToken();
-      const res = await fetch(`${API_BASE_URL}/ads`, {
-        method: "POST",
-        headers: {
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: formData,
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.message || "Failed to create ad");
-      }
+      await apiPost("/ads", formData, { authScope: "STAFF" });
 
       toast.success("Ad created successfully!");
       router.push("/admin/marketing/ads");

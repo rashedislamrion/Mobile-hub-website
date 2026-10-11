@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Body,
   Param,
   Query,
@@ -187,5 +188,18 @@ export class OrderController {
     @CurrentUser() user?: JwtPayload,
   ) {
     return this.orderService.update(id, dto, user);
+  }
+
+  @RequirePermission({
+    module: ModuleName.ORDERS,
+    action: PermissionAction.DELETE,
+    branchParam: 'branchId',
+  })
+  @Delete(':id')
+  remove(
+    @Param('id') id: string,
+    @CurrentUser() user?: JwtPayload,
+  ) {
+    return this.orderService.remove(id, user);
   }
 }

@@ -23,6 +23,7 @@ import { Switch } from "@/components/ui/switch";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/lib/api-client";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { ListLoadingSkeleton, ListEmptyState, ListErrorState } from "@/components/admin/AdminTableState";
 import {
   Dialog,
   DialogContent,
@@ -134,6 +135,7 @@ export default function RolesPermissionsPage() {
   const [roleScope, setRoleScope] = useState<string>("GLOBAL");
 
   const [isLoadingRoles, setIsLoadingRoles] = useState(true);
+  const [rolesError, setRolesError] = useState<string | null>(null);
   const [isLoadingPerms, setIsLoadingPerms] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -154,6 +156,7 @@ export default function RolesPermissionsPage() {
   const loadRoles = useCallback(async (selectId?: string) => {
     try {
       setIsLoadingRoles(true);
+      setRolesError(null);
       const res = await apiGet<RoleItem[]>("/roles");
       const list = Array.isArray(res) ? res : [];
       setRoles(list);
@@ -165,6 +168,7 @@ export default function RolesPermissionsPage() {
         setSelectedRoleId(defaultRole.id);
       }
     } catch (err: any) {
+      setRolesError(err.message || "Failed to load roles");
       toast.error(err.message || "Failed to load roles");
     } finally {
       setIsLoadingRoles(false);
@@ -437,14 +441,16 @@ export default function RolesPermissionsPage() {
           {/* List of Roles */}
           <div className="p-2 space-y-1 max-h-[calc(100vh-260px)] overflow-y-auto">
             {isLoadingRoles ? (
-              <div className="p-4 text-center text-xs text-muted-foreground">
-                <div className="h-4 w-4 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-                Loading roles...
-              </div>
+              <ListLoadingSkeleton count={4} />
+            ) : rolesError ? (
+              <ListErrorState error={rolesError} onRetry={() => loadRoles()} />
             ) : filteredRoles.length === 0 ? (
-              <div className="p-4 text-center text-xs text-muted-foreground">
-                No roles found.
-              </div>
+              <ListEmptyState
+                title="No records found"
+                description="No roles found matching your search."
+                actionLabel="Create Role"
+                onAction={() => setCreateModalOpen(true)}
+              />
             ) : (
               filteredRoles.map((role) => {
                 const isSelected = selectedRoleId === role.id;

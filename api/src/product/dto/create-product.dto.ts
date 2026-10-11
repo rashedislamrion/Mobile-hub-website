@@ -6,10 +6,50 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Min,
   ValidateNested,
 } from 'class-validator';
 import { Type, Transform, plainToInstance } from 'class-transformer';
 import { ProductStatus } from '@prisma/client';
+
+export function transformStringArray({ value }: { value: any }): string[] {
+  if (value === undefined || value === null || value === '') {
+    return [];
+  }
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => (typeof item === 'string' ? item.trim() : String(item)))
+      .filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return [];
+    }
+    if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          return parsed
+            .map((item) =>
+              typeof item === 'string' ? item.trim() : String(item),
+            )
+            .filter(Boolean);
+        }
+      } catch {
+        // Fall back to comma-separated split
+      }
+    }
+    if (trimmed.includes(',')) {
+      return trimmed
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+    return [trimmed];
+  }
+  return [String(value)];
+}
 
 export class ProductFlagsDto {
   @Transform(({ value }) => value === true || value === 'true')
@@ -50,12 +90,14 @@ export class ProductVariantDto {
     value !== undefined && value !== null ? Number(value) : 0,
   )
   @IsNumber()
+  @Min(0)
   price: number;
 
   @Transform(({ value }) =>
     value !== undefined && value !== null ? Number(value) : undefined,
   )
   @IsNumber()
+  @Min(0)
   @IsOptional()
   buyingPrice?: number;
 
@@ -63,6 +105,7 @@ export class ProductVariantDto {
     value !== undefined && value !== null ? Number(value) : undefined,
   )
   @IsNumber()
+  @Min(0)
   @IsOptional()
   wholesalePrice?: number;
 
@@ -70,6 +113,7 @@ export class ProductVariantDto {
     value !== undefined && value !== null ? Number(value) : undefined,
   )
   @IsNumber()
+  @Min(0)
   @IsOptional()
   discountedPrice?: number;
 
@@ -77,6 +121,7 @@ export class ProductVariantDto {
     value !== undefined && value !== null ? Number(value) : undefined,
   )
   @IsNumber()
+  @Min(0)
   @IsOptional()
   offerPrice?: number;
 
@@ -84,12 +129,23 @@ export class ProductVariantDto {
     value !== undefined && value !== null ? Number(value) : 0,
   )
   @IsNumber()
+  @Min(0)
   stock: number;
 
   @IsString()
   @IsOptional()
   sku?: string;
 
+  @Transform(({ value }) => {
+    if (typeof value === 'string') {
+      try {
+        return JSON.parse(value);
+      } catch {
+        return value;
+      }
+    }
+    return value;
+  })
   @IsOptional()
   attributes?: Record<string, any>;
 }
@@ -150,8 +206,8 @@ export class CreateProductDto {
   description?: string;
 
   @IsString()
-  @IsNotEmpty()
-  categoryId: string;
+  @IsOptional()
+  categoryId?: string;
 
   @IsString()
   @IsOptional()
@@ -167,6 +223,7 @@ export class CreateProductDto {
 
   @Transform(({ value }) => Number(value))
   @IsNumber()
+  @Min(0)
   regularPrice: number;
 
   @Transform(({ value }) =>
@@ -175,6 +232,7 @@ export class CreateProductDto {
       : undefined,
   )
   @IsNumber()
+  @Min(0)
   @IsOptional()
   salePrice?: number;
 
@@ -184,6 +242,7 @@ export class CreateProductDto {
       : undefined,
   )
   @IsNumber()
+  @Min(0)
   @IsOptional()
   costPrice?: number;
 
@@ -193,6 +252,7 @@ export class CreateProductDto {
       : undefined,
   )
   @IsNumber()
+  @Min(0)
   @IsOptional()
   buyingPrice?: number;
 
@@ -202,6 +262,7 @@ export class CreateProductDto {
       : undefined,
   )
   @IsNumber()
+  @Min(0)
   @IsOptional()
   wholesalePrice?: number;
 
@@ -209,6 +270,7 @@ export class CreateProductDto {
     value !== undefined && value !== '' && value !== null ? Number(value) : 1,
   )
   @IsNumber()
+  @Min(1)
   @IsOptional()
   minOrderQty?: number = 1;
 
@@ -228,9 +290,17 @@ export class CreateProductDto {
   @IsOptional()
   ogImageUrl?: string;
 
+  @Transform(transformStringArray)
   @IsArray()
+  @IsString({ each: true })
   @IsOptional()
   categoryIds?: string[];
+
+  @Transform(transformStringArray)
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  tags?: string[];
 
   @IsString()
   @IsOptional()
@@ -253,6 +323,9 @@ export class CreateProductDto {
   metaKeywords?: string;
 
   @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') {
+      return [];
+    }
     let parsed = value;
     if (typeof value === 'string') {
       try {
@@ -273,6 +346,9 @@ export class CreateProductDto {
   variants?: ProductVariantDto[];
 
   @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') {
+      return [];
+    }
     let parsed = value;
     if (typeof value === 'string') {
       try {

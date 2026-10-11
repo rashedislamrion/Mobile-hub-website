@@ -18,6 +18,10 @@ export class RunPayrollDto {
   @IsString()
   @IsOptional()
   departmentId?: string;
+
+  @IsString()
+  @IsOptional()
+  branchId?: string;
 }
 
 export class MarkPaidDto {

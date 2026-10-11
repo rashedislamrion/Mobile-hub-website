@@ -3,7 +3,8 @@
 import { useEffect, useState, useCallback } from "react";
 import { useAdminPage } from "@/contexts/AdminPageContext";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Printer, PackageCheck, CheckCircle } from "lucide-react";
+import { ArrowLeft, Printer, PackageCheck, CheckCircle, FileText } from "lucide-react";
+import { downloadPrivateAsset } from "@/lib/private-asset";
 import { StatusBadge } from "@/components/admin/DataTable";
 import {
   Dialog,
@@ -191,6 +192,23 @@ export default function PurchaseOrderViewPage() {
             <p className="text-sm text-slate-500 bg-slate-50 p-4 rounded-xl border border-slate-100">
               {po.note || "No specific instructions recorded for this purchase order."}
             </p>
+            {po.documentUrl && (
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={() =>
+                    downloadPrivateAsset(
+                      `/purchase-orders/${po.id}/document`,
+                      `${po.poNumber}_document`,
+                    )
+                  }
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-emerald-700 hover:bg-slate-50 transition-colors cursor-pointer"
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  Download Attached Document
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="w-full md:w-80 space-y-3 text-sm">

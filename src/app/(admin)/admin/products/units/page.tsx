@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { AdminTableState } from "@/components/admin/AdminTableState";
 
 interface UnitItem {
   id: string;
@@ -38,6 +39,7 @@ export default function UnitsPage() {
 
   const [units, setUnits] = useState<UnitItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
 
   // Modal State
@@ -56,10 +58,12 @@ export default function UnitsPage() {
   // Fetch Units
   const fetchData = useCallback(async () => {
     setIsLoading(true);
+    setError(null);
     try {
       const res = await apiGet<UnitItem[]>("/units");
       setUnits(Array.isArray(res) ? res : []);
     } catch (err: any) {
+      setError(err.message || "Failed to load units");
       toast.error(err.message || "Failed to load units");
     } finally {
       setIsLoading(false);
@@ -212,29 +216,19 @@ export default function UnitsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {isLoading ? (
-                <tr>
-                  <td colSpan={4} className="py-16 text-center text-slate-400">
-                    <div className="flex flex-col items-center justify-center gap-2">
-                      <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
-                      <span>Loading unit records...</span>
-                    </div>
-                  </td>
-                </tr>
-              ) : filteredUnits.length === 0 ? (
-                <tr>
-                  <td colSpan={4} className="py-16 text-center text-slate-400">
-                    <div className="flex flex-col items-center justify-center gap-1">
-                      <Scale className="w-8 h-8 text-slate-300 mb-1" />
-                      <p className="font-semibold text-slate-600">No units found</p>
-                      <p className="text-xs text-slate-400">
-                        Try modifying your search or create a new unit.
-                      </p>
-                    </div>
-                  </td>
-                </tr>
-              ) : (
-                filteredUnits.map((unit, idx) => (
+              <AdminTableState
+                isLoading={isLoading}
+                error={error}
+                isEmpty={filteredUnits.length === 0}
+                onRetry={fetchData}
+                colSpan={4}
+                loadingRows={5}
+                emptyTitle="No units found"
+                emptyDescription="Try modifying your search or create a new unit."
+                emptyActionLabel="Create Unit"
+                onEmptyAction={handleOpenCreate}
+              >
+                {filteredUnits.map((unit, idx) => (
                   <tr
                     key={unit.id}
                     className="hover:bg-slate-50/70 transition-colors duration-150"
@@ -285,8 +279,8 @@ export default function UnitsPage() {
                       </div>
                     </td>
                   </tr>
-                ))
-              )}
+                ))}
+              </AdminTableState>
             </tbody>
           </table>
         </div>

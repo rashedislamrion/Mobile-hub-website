@@ -9,6 +9,7 @@ import { UpdateBrandDto } from './dto/update-brand.dto';
 import { slugify } from '../common/utils/slug.util';
 import { Prisma, StaffStatus } from '@prisma/client';
 import { resolveUploadedFile } from '../common/upload/multer.config';
+import { storageService } from '../common/upload/storage.service';
 
 @Injectable()
 export class BrandService {
@@ -132,8 +133,9 @@ export class BrandService {
     const brand = await this.prisma.brand.findUnique({
       where: { id },
       include: {
-        products: { take: 1 },
-        series: { take: 1 },
+        _count: {
+          select: { products: true, series: true },
+        },
       },
     });
 
@@ -141,16 +143,29 @@ export class BrandService {
       throw new NotFoundException(`Brand with ID "${id}" not found`);
     }
 
-    if (brand.products.length > 0) {
-      throw new ConflictException(
-        `Cannot delete brand "${brand.name}" because it is linked to products.`,
-      );
+    const blockers: string[] = [];
+    if (brand._count.products > 0) {
+      blockers.push(`${brand._count.products} linked product(s)`);
+    }
+    if (brand._count.series > 0) {
+      blockers.push(`${brand._count.series} linked series`);
     }
 
-    if (brand.series.length > 0) {
-      throw new ConflictException(
-        `Cannot delete brand "${brand.name}" because it has linked series.`,
-      );
+    if (blockers.length > 0) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        message: `Cannot delete brand "${brand.name}". It has ${blockers.join(' and ')}. Please reassign or delete them first, or deactivate the brand.`,
+        canDeactivate: true,
+        blockers: {
+          products: brand._count.products,
+          series: brand._count.series,
+        },
+      });
+    }
+
+    if (brand.logo) {
+      await storageService.safeUnlink(brand.logo);
     }
 
     return this.prisma.brand.delete({

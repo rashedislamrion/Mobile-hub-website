@@ -10,7 +10,9 @@ import {
   UseGuards,
   UseInterceptors,
   UploadedFile,
+  Res,
 } from '@nestjs/common';
+import { Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ExpenseService } from './expense.service';
 import {
@@ -24,7 +26,10 @@ import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { RequirePermission } from '../auth/decorators/require-permission.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
-import { createMulterConfig, resolveUploadedFile } from '../common/upload/multer.config';
+import {
+  createMulterConfig,
+  resolveUploadedFile,
+} from '../common/upload/multer.config';
 import { ExpenseStatus, ModuleName, PermissionAction } from '@prisma/client';
 
 @Controller()
@@ -72,6 +77,7 @@ export class ExpenseController {
   @Get('expenses')
   @RequirePermission({ module: ModuleName.EXPENSE, action: PermissionAction.READ })
   findAllExpenses(
+    @CurrentUser() user: JwtPayload,
     @Query('branch') branch?: string,
     @Query('category') category?: string,
     @Query('status') status?: ExpenseStatus,
@@ -81,22 +87,35 @@ export class ExpenseController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    return this.expenseService.findAllExpenses({
-      branch,
-      category,
-      status,
-      dateFrom,
-      dateTo,
-      search,
-      page: page ? parseInt(page, 10) : undefined,
-      limit: limit ? parseInt(limit, 10) : undefined,
-    });
+    return this.expenseService.findAllExpenses(
+      {
+        branch,
+        category,
+        status,
+        dateFrom,
+        dateTo,
+        search,
+        page: page ? parseInt(page, 10) : undefined,
+        limit: limit ? parseInt(limit, 10) : undefined,
+      },
+      user,
+    );
+  }
+
+  @Get('expenses/:id/attachment')
+  @RequirePermission({ module: ModuleName.EXPENSE, action: PermissionAction.READ })
+  streamAttachment(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+    @Res() res: any,
+  ) {
+    return this.expenseService.streamAttachment(id, user, res);
   }
 
   @Get('expenses/:id')
   @RequirePermission({ module: ModuleName.EXPENSE, action: PermissionAction.READ })
-  findOneExpense(@Param('id') id: string) {
-    return this.expenseService.findOneExpense(id);
+  findOneExpense(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.expenseService.findOneExpense(id, user);
   }
 
   @Post('expenses')
@@ -107,8 +126,11 @@ export class ExpenseController {
     @UploadedFile() file: Express.Multer.File | undefined,
     @CurrentUser() user: JwtPayload,
   ) {
-    const attachmentUrl = file ? ((await resolveUploadedFile(file, 'expenses')) || `/uploads/expenses/${file.filename}`) : undefined;
-    return this.expenseService.createExpense(dto, user.sub, attachmentUrl);
+    const attachmentUrl = file
+      ? (await resolveUploadedFile(file, 'expenses')) ||
+        `/uploads/expenses/${file.filename}`
+      : undefined;
+    return this.expenseService.createExpense(dto, user, attachmentUrl);
   }
 
   @Patch('expenses/:id/mark-paid')
@@ -118,12 +140,12 @@ export class ExpenseController {
     @Body() dto: MarkExpensePaidDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.expenseService.markPaid(id, dto, user.sub);
+    return this.expenseService.markPaid(id, dto, user);
   }
 
   @Delete('expenses/:id')
   @RequirePermission({ module: ModuleName.EXPENSE, action: PermissionAction.DELETE })
-  removeExpense(@Param('id') id: string) {
-    return this.expenseService.removeExpense(id);
+  removeExpense(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.expenseService.removeExpense(id, user);
   }
 }

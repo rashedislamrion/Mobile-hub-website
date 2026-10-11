@@ -15,10 +15,12 @@ import {
   Eye, EyeOff, Loader2, Save, AlertTriangle 
 } from "lucide-react";
 import { apiGet, apiPatch } from "@/lib/api-client";
+import { ListLoadingSkeleton, ListErrorState } from "@/components/admin/AdminTableState";
 
 export default function ThirdPartyConfigPage() {
   const { setTitle, setBadge } = useAdminPage();
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
   // Gateways
@@ -84,6 +86,7 @@ export default function ThirdPartyConfigPage() {
 
   const fetchAllConfigs = async () => {
     setIsLoading(true);
+    setError(null);
     try {
       const [gateways, smsData, mailData, firebaseData, recaptchaData] = await Promise.all([
         apiGet<any[]>("/payment-gateways").catch(() => []),
@@ -106,8 +109,9 @@ export default function ThirdPartyConfigPage() {
       if (mailData) setMail(mailData);
       if (firebaseData) setFirebase(firebaseData);
       if (recaptchaData) setRecaptcha(recaptchaData);
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      setError(e?.message || "Failed to load third party configuration");
       toast.error("Failed to load third party configuration");
     } finally {
       setIsLoading(false);
@@ -202,9 +206,32 @@ export default function ThirdPartyConfigPage() {
 
   if (isLoading) {
     return (
-      <div className="py-16 text-center">
-        <Loader2 className="w-8 h-8 animate-spin text-emerald-600 mx-auto mb-2" />
-        <p className="text-sm text-slate-500">Loading third party credentials & configs...</p>
+      <div className="space-y-6">
+        <div className="flex justify-between items-center bg-white p-4 rounded-xl border shadow-sm">
+          <div>
+            <h2 className="text-base font-bold text-slate-800">3rd Party Integrations & Gateways</h2>
+            <p className="text-xs text-slate-500">Manage credentials for bKash, SSLCommerz, SMS, SMTP, Firebase, and reCAPTCHA</p>
+          </div>
+        </div>
+        <div className="bg-white rounded-xl border border-slate-200 p-6">
+          <ListLoadingSkeleton count={4} />
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="space-y-6">
+        <div className="flex justify-between items-center bg-white p-4 rounded-xl border shadow-sm">
+          <div>
+            <h2 className="text-base font-bold text-slate-800">3rd Party Integrations & Gateways</h2>
+            <p className="text-xs text-slate-500">Manage credentials for bKash, SSLCommerz, SMS, SMTP, Firebase, and reCAPTCHA</p>
+          </div>
+        </div>
+        <div className="bg-white rounded-xl border border-slate-200 p-8">
+          <ListErrorState error={error} onRetry={fetchAllConfigs} />
+        </div>
       </div>
     );
   }

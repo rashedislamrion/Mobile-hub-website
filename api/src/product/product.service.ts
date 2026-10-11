@@ -15,10 +15,54 @@ import {
   getUploadRoot,
   resolveUploadedFiles,
 } from '../common/upload/multer.config';
+import { storageService } from '../common/upload/storage.service';
+
+export function sanitizePublicProduct<T extends Record<string, any>>(product: T): T {
+  if (!product) return product;
+  const {
+    costPrice,
+    buyingPrice,
+    wholesalePrice,
+    supplier,
+    supplierId,
+    internalNotes,
+    ...cleanProduct
+  } = product as any;
+
+  if (Array.isArray(cleanProduct.variants)) {
+    cleanProduct.variants = cleanProduct.variants.map((v: any) => {
+      const {
+        costPrice: _cp,
+        buyingPrice: _bp,
+        wholesalePrice: _wp,
+        supplier: _s,
+        supplierId: _sid,
+        phoneUnits: _pu,
+        branchInventories: _bi,
+        ...cleanVariant
+      } = v;
+      return cleanVariant;
+    });
+  }
+
+  if (Array.isArray(cleanProduct.relatedProducts)) {
+    cleanProduct.relatedProducts = cleanProduct.relatedProducts.map((rp: any) =>
+      sanitizePublicProduct(rp),
+    );
+  }
+
+  return cleanProduct as T;
+}
+
+import { BranchScopeService } from '../common/branch/branch-scope.service';
+import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 
 @Injectable()
 export class ProductService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private branchScopeService: BranchScopeService,
+  ) {}
 
   private async generateUniqueSlug(
     baseName: string,
@@ -197,7 +241,7 @@ export class ProductService {
     }
 
     const specFilters: Prisma.ProductSpecificationWhereInput[] = [];
-    ['guarantee', 'frame', 'type', 'service'].forEach((specKey) => {
+    ['guarantee', 'frame', 'service'].forEach((specKey) => {
       const val = query[specKey as keyof typeof query];
       if (val && typeof val === 'string') {
         const vals = val
@@ -296,11 +340,11 @@ export class ProductService {
         (sum, v) => sum + (Number(v.stock) || 0),
         0,
       );
-      return {
+      return sanitizePublicProduct({
         ...p,
         variants: mappedVariants,
         totalStock,
-      };
+      });
     });
 
     return {
@@ -400,12 +444,12 @@ export class ProductService {
       };
     });
 
-    return {
+    return sanitizePublicProduct({
       ...product,
       variants: mappedVariants,
       totalStock,
       relatedProducts: mappedRelated,
-    };
+    });
   }
 
   async findAllAdmin(query: {
@@ -446,18 +490,28 @@ export class ProductService {
       where.isBestDeal = query.bestDeal === true || query.bestDeal === 'true';
     }
 
-    if (query.search) {
-      const search = query.search.trim();
-      where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { code: { contains: search, mode: 'insensitive' } },
-        { slug: { contains: search, mode: 'insensitive' } },
-        {
-          variants: {
-            some: { sku: { contains: search, mode: 'insensitive' } },
-          },
-        },
-      ];
+    if (query.search?.trim()) {
+      const tokens = query.search.trim().split(/\s+/).filter(Boolean);
+      if (tokens.length > 0) {
+        where.AND = tokens.map((t) => ({
+          OR: [
+            { name: { contains: t, mode: 'insensitive' } },
+            { code: { contains: t, mode: 'insensitive' } },
+            { slug: { contains: t, mode: 'insensitive' } },
+            { brand: { name: { contains: t, mode: 'insensitive' } } },
+            { series: { name: { contains: t, mode: 'insensitive' } } },
+            {
+              variants: {
+                some: {
+                  OR: [
+                    { sku: { contains: t, mode: 'insensitive' } },
+                  ],
+                },
+              },
+            },
+          ],
+        }));
+      }
     }
 
     let orderBy:
@@ -568,15 +622,32 @@ export class ProductService {
   async create(dto: CreateProductDto, files?: Express.Multer.File[]) {
     const slug = await this.generateUniqueSlug(dto.slug || dto.name);
     const code = await this.generateUniqueCode(dto.code);
-    const categoryId =
-      dto.categoryId ||
-      (dto.categoryIds && dto.categoryIds.length > 0
-        ? dto.categoryIds[0]
-        : undefined);
+    const allCategoryIds = Array.from(
+      new Set(
+        [
+          dto.categoryId,
+          ...(Array.isArray(dto.categoryIds) ? dto.categoryIds : []),
+        ].filter(Boolean) as string[],
+      ),
+    );
 
-    if (!categoryId) {
+    if (allCategoryIds.length === 0) {
       throw new BadRequestException('At least one Category must be selected.');
     }
+
+    const existingCats = await this.prisma.category.findMany({
+      where: { id: { in: allCategoryIds } },
+      select: { id: true },
+    });
+    const existingCatIds = new Set(existingCats.map((c) => c.id));
+    for (const catId of allCategoryIds) {
+      if (!existingCatIds.has(catId)) {
+        throw new BadRequestException(
+          `Category with ID "${catId}" does not exist.`,
+        );
+      }
+    }
+    const categoryId = allCategoryIds[0];
 
     return this.prisma.$transaction(async (tx) => {
       const defaultBranch = await tx.branch.findFirst();
@@ -759,6 +830,34 @@ export class ProductService {
 
     if (!existing) {
       throw new NotFoundException(`Product with ID "${id}" not found`);
+    }
+
+    if (
+      dto.categoryId !== undefined ||
+      (dto.categoryIds && dto.categoryIds.length > 0)
+    ) {
+      const updateCatIds = Array.from(
+        new Set(
+          [
+            dto.categoryId,
+            ...(Array.isArray(dto.categoryIds) ? dto.categoryIds : []),
+          ].filter(Boolean) as string[],
+        ),
+      );
+      if (updateCatIds.length > 0) {
+        const existingCats = await this.prisma.category.findMany({
+          where: { id: { in: updateCatIds } },
+          select: { id: true },
+        });
+        const existingCatIds = new Set(existingCats.map((c) => c.id));
+        for (const catId of updateCatIds) {
+          if (!existingCatIds.has(catId)) {
+            throw new BadRequestException(
+              `Category with ID "${catId}" does not exist.`,
+            );
+          }
+        }
+      }
     }
 
     let slug = existing.slug;
@@ -998,10 +1097,25 @@ export class ProductService {
     const product = await this.prisma.product.findUnique({
       where: { id },
       include: {
-        orderItems: { take: 1 },
-        purchaseOrderItems: { take: 1 },
+        _count: {
+          select: {
+            orderItems: true,
+            purchaseOrderItems: true,
+            wastedProducts: true,
+          },
+        },
         images: true,
-        variants: { select: { id: true } },
+        variants: {
+          select: {
+            id: true,
+            branchInventories: {
+              where: {
+                quantity: { gt: 0 },
+              },
+              select: { branchId: true, quantity: true },
+            },
+          },
+        },
       },
     });
 
@@ -1009,30 +1123,56 @@ export class ProductService {
       throw new NotFoundException(`Product with ID "${id}" not found`);
     }
 
-    if (
-      product.orderItems.length > 0 ||
-      product.purchaseOrderItems.length > 0
-    ) {
-      throw new ConflictException(
-        `Cannot delete product "${product.name}" with existing order history. Please set its status to Draft or Discontinued instead.`,
+    const variantIds = product.variants.map((v) => v.id);
+    const phoneUnitsCount =
+      variantIds.length > 0
+        ? await this.prisma.phoneUnit.count({
+            where: { productVariantId: { in: variantIds } },
+          })
+        : 0;
+
+    const blockers: string[] = [];
+    const blockerCounts: Record<string, number> = {};
+
+    if (product._count.orderItems > 0) {
+      blockers.push(`${product._count.orderItems} order item(s)`);
+      blockerCounts.orderItems = product._count.orderItems;
+    }
+    if (product._count.purchaseOrderItems > 0) {
+      blockers.push(`${product._count.purchaseOrderItems} purchase order item(s)`);
+      blockerCounts.purchaseOrderItems = product._count.purchaseOrderItems;
+    }
+    if (phoneUnitsCount > 0) {
+      blockers.push(`${phoneUnitsCount} IMEI unit(s)`);
+      blockerCounts.phoneUnits = phoneUnitsCount;
+    }
+
+    const positiveStockBranches = product.variants.flatMap(
+      (v) => v.branchInventories,
+    );
+    if (positiveStockBranches.length > 0) {
+      const totalStock = positiveStockBranches.reduce(
+        (sum, inv) => sum + inv.quantity,
+        0,
       );
+      blockers.push(`${totalStock} active unit(s) in branch stock`);
+      blockerCounts.stock = totalStock;
+    }
+
+    if (blockers.length > 0) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        message: `Cannot delete product "${product.name}". It has ${blockers.join(', ')}. Please set its status to INACTIVE, DRAFT, or DISCONTINUED instead.`,
+        canDeactivate: true,
+        blockers: blockerCounts,
+      });
     }
 
     for (const img of product.images) {
-      try {
-        const filePath = join(
-          process.cwd(),
-          img.url.startsWith('/') ? img.url.slice(1) : img.url,
-        );
-        if (fs.existsSync(filePath)) {
-          fs.unlinkSync(filePath);
-        }
-      } catch (e) {
-        // Ignore file deletion errors
-      }
+      await storageService.safeUnlink(img.url);
     }
 
-    const variantIds = product.variants.map((v) => v.id);
     if (variantIds.length > 0) {
       await this.prisma.branchInventory.deleteMany({
         where: { productVariantId: { in: variantIds } },
@@ -1044,14 +1184,17 @@ export class ProductService {
     });
   }
 
-  async posSearch(query: {
-    search?: string;
-    category?: string;
-    branch?: string;
-    branchId?: string;
-    inStock?: string | boolean;
-    limit?: number;
-  }) {
+  async posSearch(
+    query: {
+      search?: string;
+      category?: string;
+      branch?: string;
+      branchId?: string;
+      inStock?: string | boolean;
+      limit?: number;
+    },
+    user?: JwtPayload,
+  ) {
     const limit = Math.max(1, Math.min(200, Number(query.limit) || 60));
 
     const productWhere: Prisma.ProductWhereInput = {
@@ -1069,26 +1212,36 @@ export class ProductService {
     }
 
     if (query.search?.trim()) {
-      const s = query.search.trim();
-      productWhere.AND = [
-        {
+      const tokens = query.search.trim().split(/\s+/).filter(Boolean);
+      if (tokens.length > 0) {
+        productWhere.AND = tokens.map((t) => ({
           OR: [
-            { id: s },
-            { name: { contains: s, mode: 'insensitive' } },
-            { code: { contains: s, mode: 'insensitive' } },
-            { slug: { contains: s, mode: 'insensitive' } },
+            { id: t },
+            { name: { contains: t, mode: 'insensitive' } },
+            { code: { contains: t, mode: 'insensitive' } },
+            { slug: { contains: t, mode: 'insensitive' } },
+            { brand: { name: { contains: t, mode: 'insensitive' } } },
+            { series: { name: { contains: t, mode: 'insensitive' } } },
             {
-              variants: { some: { sku: { contains: s, mode: 'insensitive' } } },
+              variants: {
+                some: {
+                  OR: [
+                    { id: t },
+                    { sku: { contains: t, mode: 'insensitive' } },
+                    { color: { contains: t, mode: 'insensitive' } },
+                    { quality: { contains: t, mode: 'insensitive' } },
+                  ],
+                },
+              },
             },
-            { variants: { some: { id: s } } },
             {
               specifications: {
-                some: { value: { contains: s, mode: 'insensitive' } },
+                some: { value: { contains: t, mode: 'insensitive' } },
               },
             },
           ],
-        },
-      ];
+        }));
+      }
     }
 
     const products = await this.prisma.product.findMany({
@@ -1123,11 +1276,25 @@ export class ProductService {
       orderBy: { updatedAt: 'desc' },
     });
 
-    const targetBranch =
+    let targetBranch =
       (query.branchId || query.branch) &&
       (query.branchId || query.branch) !== 'all'
         ? query.branchId || query.branch
         : null;
+
+    if (user) {
+      const scope = await this.branchScopeService.resolveScope(user);
+      if (!scope.isGlobal) {
+        if (targetBranch) {
+          await this.branchScopeService.validateBranchAccess(
+            user,
+            targetBranch,
+          );
+        } else {
+          targetBranch = scope.allowedBranchIds[0] || null;
+        }
+      }
+    }
 
     const flatVariants: any[] = [];
 
@@ -1279,7 +1446,39 @@ export class ProductService {
       }
     }
 
-    return flatVariants;
+    if (query.search?.trim()) {
+      const tokens = query.search.toLowerCase().trim().split(/\s+/).filter(Boolean);
+      flatVariants.sort((a, b) => {
+        let scoreA = 0;
+        let scoreB = 0;
+        const nameA = (a.productName || '').toLowerCase();
+        const nameB = (b.productName || '').toLowerCase();
+        const skuA = (a.sku || '').toLowerCase();
+        const skuB = (b.sku || '').toLowerCase();
+        const brandA = (a.brandName || '').toLowerCase();
+        const brandB = (b.brandName || '').toLowerCase();
+
+        for (const tok of tokens) {
+          if (skuA === tok) scoreA += 100;
+          if (skuB === tok) scoreB += 100;
+          if (nameA.startsWith(tok)) scoreA += 50;
+          if (nameB.startsWith(tok)) scoreB += 50;
+          if (nameA.includes(tok)) scoreA += 25;
+          if (nameB.includes(tok)) scoreB += 25;
+          if (brandA.includes(tok)) scoreA += 15;
+          if (brandB.includes(tok)) scoreB += 15;
+          if (skuA.includes(tok)) scoreA += 10;
+          if (skuB.includes(tok)) scoreB += 10;
+        }
+
+        if (scoreB !== scoreA) {
+          return scoreB - scoreA;
+        }
+        return nameA.localeCompare(nameB);
+      });
+    }
+
+    return flatVariants.slice(0, limit);
   }
 
   async getCategoriesTree() {

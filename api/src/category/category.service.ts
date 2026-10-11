@@ -9,6 +9,7 @@ import { UpdateCategoryDto } from './dto/update-category.dto';
 import { slugify } from '../common/utils/slug.util';
 import { Prisma, StaffStatus } from '@prisma/client';
 import { resolveUploadedFile } from '../common/upload/multer.config';
+import { storageService } from '../common/upload/storage.service';
 
 @Injectable()
 export class CategoryService {
@@ -195,8 +196,9 @@ export class CategoryService {
     const category = await this.prisma.category.findUnique({
       where: { id },
       include: {
-        children: true,
-        products: { take: 1 },
+        _count: {
+          select: { children: true, products: true },
+        },
       },
     });
 
@@ -204,16 +206,32 @@ export class CategoryService {
       throw new NotFoundException(`Category with ID "${id}" not found`);
     }
 
-    if (category.children.length > 0) {
-      throw new ConflictException(
-        `Cannot delete category "${category.name}" because it has ${category.children.length} subcategory/subcategories. Please delete or reassign subcategories first.`,
-      );
+    const blockers: string[] = [];
+    if (category._count.children > 0) {
+      blockers.push(`${category._count.children} subcategory/subcategories`);
+    }
+    if (category._count.products > 0) {
+      blockers.push(`${category._count.products} linked product(s)`);
     }
 
-    if (category.products.length > 0) {
-      throw new ConflictException(
-        `Cannot delete category "${category.name}" because it has linked products. Please reassign or delete the products first.`,
-      );
+    if (blockers.length > 0) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        message: `Cannot delete category "${category.name}". It has ${blockers.join(' and ')}. Please reassign or delete them first, or deactivate the category.`,
+        canDeactivate: true,
+        blockers: {
+          subcategories: category._count.children,
+          products: category._count.products,
+        },
+      });
+    }
+
+    if (category.image) {
+      await storageService.safeUnlink(category.image);
+    }
+    if (category.icon) {
+      await storageService.safeUnlink(category.icon);
     }
 
     return this.prisma.category.delete({

@@ -17,7 +17,8 @@ import {
   PlusCircle,
   PieChart
 } from "lucide-react";
-import { adminNavConfig, NavItem } from "@/lib/mock-data/admin-nav";
+import { NavItem } from "@/lib/mock-data/admin-nav";
+import { getVisibleNavConfig } from "@/lib/admin-nav-service";
 import { useAdminPage } from "@/contexts/AdminPageContext";
 import { useStaffAuth } from "@/context/AuthContext";
 import {
@@ -115,103 +116,7 @@ export function AdminSidebar() {
     router.push("/admin/login");
   };
 
-  const roleName = user?.role?.name?.toLowerCase() || "";
-  const isRestrictedStaff =
-    user &&
-    user.role &&
-    roleName !== "admin" &&
-    roleName !== "super admin" &&
-    roleName !== "administrator" &&
-    !(user.role.scope === "GLOBAL" && roleName.includes("admin"));
-
-  const isItemVisible = (item: NavItem): boolean => {
-    // Dashboard is always visible
-    if (item.label === "Dashboard" || item.href === "/admin") return true;
-
-    // Non-restricted views see all navigation items
-    if (!isRestrictedStaff) return true;
-
-    // For restricted staff roles (e.g. Salesperson, Technician, SEO):
-    if (item.children && item.children.length > 0) {
-      if (item.module && hasPermission(item.module, "READ")) {
-        return true;
-      }
-      return item.children.some((child) => {
-        const childModule = child.module || item.module;
-        return childModule ? hasPermission(childModule, "READ") : false;
-      });
-    }
-
-    if (!item.module) {
-      return false;
-    }
-
-    return hasPermission(item.module, "READ");
-  };
-
-  const isTechnician = roleName.includes("technician");
-  const isBranchRole = roleName.includes("branch admin") || roleName.includes("branch manager");
-
-  const filterItemForRole = (item: NavItem): boolean => {
-    // Product Requests is visible ONLY to Branch Admin / Branch Manager
-    if (item.href === "/admin/branch/product-requests") {
-      return isBranchRole;
-    }
-    return true;
-  };
-
-  const technicianNavConfig = [
-    {
-      groupLabel: "MY WORKSPACE",
-      items: [
-        {
-          label: "Technician Workspace",
-          href: "/admin/technician",
-          icon: Wrench,
-          module: "SALES",
-        },
-        {
-          label: "Create New Service",
-          href: "/admin/servicing/create",
-          icon: PlusCircle,
-          module: "SALES",
-        },
-        {
-          label: "Servicing Report",
-          href: "/admin/technician/servicing-report",
-          icon: PieChart,
-          module: "SALES",
-        },
-      ],
-    },
-  ];
-
-  const visibleNavConfig = isTechnician
-    ? technicianNavConfig
-    : !isRestrictedStaff
-    ? adminNavConfig.map((group) => ({
-        ...group,
-        items: group.items.filter((item) => filterItemForRole(item)),
-      })).filter((group) => group.items.length > 0)
-    : adminNavConfig
-        .map((group) => ({
-          ...group,
-          items: group.items
-            .filter((item) => filterItemForRole(item) && isItemVisible(item))
-            .map((item) => {
-              if (item.children) {
-                return {
-                  ...item,
-                  children: item.children.filter((child) => {
-                    const childModule = child.module || item.module;
-                    return childModule ? hasPermission(childModule, "READ") : false;
-                  }),
-                };
-              }
-              return item;
-            }),
-        }))
-        .filter((group) => group.items.length > 0);
+  const visibleNavConfig = getVisibleNavConfig(user, hasPermission);
 
   return (
     <div className={`flex flex-col h-full bg-white border-r border-slate-200 transition-all duration-300 ${isSidebarCollapsed ? 'w-[72px]' : 'w-[260px]'}`}>

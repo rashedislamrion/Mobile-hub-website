@@ -6,6 +6,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateAdDto, UpdateAdDto, TrackAdDto } from './dto/ad.dto';
 import { AdPlacement, Prisma, PromoAdStatus } from '@prisma/client';
+import { storageService } from '../common/upload/storage.service';
 
 @Injectable()
 export class AdService {
@@ -173,7 +174,13 @@ export class AdService {
   }
 
   async remove(id: string) {
-    await this.findOne(id);
+    const ad = await this.findOne(id);
+    if (ad.imageUrl) {
+      await storageService.safeUnlink(ad.imageUrl);
+    }
+    if (ad.mobileThumbnailUrl) {
+      await storageService.safeUnlink(ad.mobileThumbnailUrl);
+    }
     return this.prisma.ad.delete({ where: { id } });
   }
 }

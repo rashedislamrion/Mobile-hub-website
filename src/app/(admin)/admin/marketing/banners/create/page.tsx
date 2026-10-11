@@ -54,25 +54,17 @@ export default function CreateBannerPage() {
         formData.append("image", selectedFile);
         formData.append("linkUrl", "#");
 
-        const res = await fetch(`${API_BASE_URL}/banners`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${getStaffToken() || ""}`,
-          },
-          body: formData,
-        });
-
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          throw new Error(errData.message || "Failed to create banner");
-        }
+        await apiPost("/banners", formData, { authScope: "STAFF" });
       } else {
         await apiPost("/banners", {
           title: title.trim(),
           imageUrl: previewUrl,
           linkUrl: "#",
-        });
+        }, { authScope: "STAFF" });
       }
+
+      // Revalidate storefront homepage to display the newly created banner immediately
+      fetch("/api/revalidate?path=/").catch(() => {});
 
       toast.success("Promotional banner created successfully!");
       router.push("/admin/marketing/banners");

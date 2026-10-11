@@ -16,6 +16,8 @@ import { CreateProductDto, ProductFlagsDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { Public } from '../auth/decorators/public.decorator';
 import { RequirePermission } from '../auth/decorators/require-permission.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import { ModuleName, PermissionAction, ProductStatus } from '@prisma/client';
 import { createMulterConfig } from '../common/upload/multer.config';
 
@@ -66,11 +68,12 @@ export class ProductController {
   }
 
   @RequirePermission({
-    module: ModuleName.SALES,
-    action: PermissionAction.CREATE,
+    module: ModuleName.PRODUCTS,
+    action: PermissionAction.READ,
   })
   @Get('pos-search')
   posSearch(
+    @CurrentUser() user: JwtPayload,
     @Query('search') search?: string,
     @Query('category') category?: string,
     @Query('branch') branch?: string,
@@ -78,14 +81,17 @@ export class ProductController {
     @Query('inStock') inStock?: string,
     @Query('limit') limit?: number,
   ) {
-    return this.productService.posSearch({
-      search,
-      category,
-      branch: branchId || branch,
-      branchId,
-      inStock,
-      limit,
-    });
+    return this.productService.posSearch(
+      {
+        search,
+        category,
+        branch: branchId || branch,
+        branchId: branchId || branch,
+        inStock,
+        limit,
+      },
+      user,
+    );
   }
 
   @RequirePermission({

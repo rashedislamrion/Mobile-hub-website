@@ -11,6 +11,7 @@ import {
   UpdateFooterColumnItemDto,
   UpdateFooterSettingsDto,
 } from './dto/footer-settings.dto';
+import { OFFICIAL_CONTACT } from '../common/constants/contact';
 
 const DEFAULT_COLUMNS = [
   {
@@ -23,8 +24,8 @@ const DEFAULT_COLUMNS = [
         navigationLabel: 'Dedicated Support',
         url: '/contact',
         extraData: {
-          availableTime: '9:00 AM - 10:00 PM',
-          phone: '01602670922',
+          availableTime: OFFICIAL_CONTACT.openingHours.hours,
+          phone: OFFICIAL_CONTACT.phone.display,
         },
       },
       {
@@ -102,8 +103,8 @@ const DEFAULT_COLUMNS = [
         url: '/contact',
         extraData: {
           name: 'Eastern Plaza (Flagship)',
-          location: '2/13 Eastern Plaza Shopping Complex, Hatirpool, Dhaka 1205',
-          phone: '01602670922',
+          location: OFFICIAL_CONTACT.address.en,
+          phone: OFFICIAL_CONTACT.phone.display,
         },
       },
     ],
@@ -153,9 +154,9 @@ export class FooterSettingsService implements OnModuleInit {
     if (!settings) {
       settings = await this.prisma.footerSettings.create({
         data: {
-          supportPhone: '01602670922',
-          supportEmail: 'mobilehubbd2@gmail.com',
-          liveChatLink: 'https://wa.me/8801602670922',
+          supportPhone: OFFICIAL_CONTACT.phone.display,
+          supportEmail: OFFICIAL_CONTACT.email,
+          liveChatLink: `https://wa.me/${OFFICIAL_CONTACT.phone.whatsappNumber}`,
           faqLink: '/faq',
           copyrightText: '© 2026 MobileHubBD. All rights reserved.',
         },

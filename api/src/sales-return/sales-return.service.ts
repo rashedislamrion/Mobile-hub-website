@@ -10,18 +10,26 @@ import {
   RejectSalesReturnDto,
 } from './dto/create-sales-return.dto';
 import { Prisma, ReturnStatus } from '@prisma/client';
+import { BranchScopeService } from '../common/branch/branch-scope.service';
+import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 
 @Injectable()
 export class SalesReturnService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private branchScopeService: BranchScopeService,
+  ) {}
 
-  async findAll(query: {
-    status?: ReturnStatus;
-    branch?: string;
-    search?: string;
-    page?: number;
-    limit?: number;
-  }) {
+  async findAll(
+    query: {
+      status?: ReturnStatus;
+      branch?: string;
+      search?: string;
+      page?: number;
+      limit?: number;
+    },
+    user?: JwtPayload,
+  ) {
     const page = Math.max(1, Number(query.page) || 1);
     const limit = Math.max(1, Math.min(100, Number(query.limit) || 20));
     const skip = (page - 1) * limit;
@@ -29,7 +37,14 @@ export class SalesReturnService {
     const where: Prisma.SalesReturnWhereInput = {};
 
     if (query.status) where.status = query.status;
-    if (query.branch) where.branchId = query.branch;
+
+    const branchFilter = await this.branchScopeService.getBranchFilter(
+      user,
+      query.branch,
+    );
+    if (branchFilter !== undefined) {
+      where.branchId = branchFilter;
+    }
 
     if (query.search?.trim()) {
       const s = query.search.trim();
@@ -79,7 +94,7 @@ export class SalesReturnService {
     };
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, user?: JwtPayload) {
     const returnRecord = await this.prisma.salesReturn.findUnique({
       where: { id },
       include: {
@@ -110,16 +125,28 @@ export class SalesReturnService {
 
     if (!returnRecord)
       throw new NotFoundException(`Sales return "${id}" not found.`);
+
+    if (user) {
+      await this.branchScopeService.validateBranchAccess(
+        user,
+        returnRecord.branchId,
+      );
+    }
+
     return returnRecord;
   }
 
-  async create(dto: CreateSalesReturnDto) {
+  async create(dto: CreateSalesReturnDto, user?: JwtPayload) {
     const order = await this.prisma.order.findUnique({
       where: { id: dto.orderId },
       include: { items: true },
     });
     if (!order)
       throw new NotFoundException(`Order "${dto.orderId}" not found.`);
+
+    if (user) {
+      await this.branchScopeService.validateBranchAccess(user, order.branchId);
+    }
 
     const existingReturn = await this.prisma.salesReturn.findUnique({
       where: { orderId: dto.orderId },
@@ -173,7 +200,9 @@ export class SalesReturnService {
     });
   }
 
-  async approve(id: string) {
+  async approve(id: string, user?: JwtPayload) {
+    await this.findOne(id, user);
+
     const salesReturn = await this.prisma.salesReturn.findUnique({
       where: { id },
       include: {
@@ -209,7 +238,9 @@ export class SalesReturnService {
     });
   }
 
-  async reject(id: string, dto?: RejectSalesReturnDto) {
+  async reject(id: string, dto?: RejectSalesReturnDto, user?: JwtPayload) {
+    await this.findOne(id, user);
+
     const salesReturn = await this.prisma.salesReturn.findUnique({
       where: { id },
     });
@@ -233,7 +264,9 @@ export class SalesReturnService {
     });
   }
 
-  async refund(id: string) {
+  async refund(id: string, user?: JwtPayload) {
+    await this.findOne(id, user);
+
     const salesReturn = await this.prisma.salesReturn.findUnique({
       where: { id },
     });

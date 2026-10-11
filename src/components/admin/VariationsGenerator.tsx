@@ -66,35 +66,59 @@ export function VariationsGenerator({
         if (Array.isArray(data)) {
           setAvailableAttributes(data);
 
-          // Pre-suggest attributes for PHONE products based on condition & brand
-          const isPhone = productType?.toLowerCase() === "phone";
-          if (isPhone && selectedAttrIds.length === 0 && variants.length === 0) {
-            const isUsed = condition?.toUpperCase() === "USED";
-            const targetNames = isUsed
-              ? ["Color", "Region", "Storage", "Battery Health"]
-              : ["Color", "Region", "Storage", "RAM"];
+          // TASK 1b: On EDIT form pre-select ONLY what the saved product actually has!
+          // On NEW form: NO pre-selection! No attribute ticked, no value chosen!
+          if (variants && variants.length > 0) {
+            const activeAttrIds = new Set<string>();
+            const activeAttrValues: Record<string, Set<string>> = {};
 
-            const matchedIds: string[] = [];
-            const matchedValues: Record<string, string[]> = {};
-
-            targetNames.forEach((targetName) => {
-              const matched = data.find(
-                (attr) =>
-                  attr.name.toLowerCase() === targetName.toLowerCase() ||
-                  (targetName === "Region" && attr.name.toLowerCase() === "variant")
-              );
-              if (matched) {
-                matchedIds.push(matched.id);
-                if (matched.values && matched.values.length > 0) {
-                  matchedValues[matched.id] = matched.values.slice(0, 2).map((v: any) => v.value);
+            variants.forEach((v) => {
+              if (v.attributes && typeof v.attributes === "object") {
+                Object.entries(v.attributes).forEach(([attrKey, attrVal]) => {
+                  if (!attrVal || attrKey === "customName") return;
+                  const matched = data.find(
+                    (attr: AttributeItem) =>
+                      attr.name.toLowerCase() === attrKey.toLowerCase()
+                  );
+                  if (matched) {
+                    activeAttrIds.add(matched.id);
+                    if (!activeAttrValues[matched.id]) activeAttrValues[matched.id] = new Set();
+                    activeAttrValues[matched.id].add(attrVal);
+                  }
+                });
+              }
+              if (v.color) {
+                const colorAttr = data.find((a: AttributeItem) => a.name.toLowerCase() === "color");
+                if (colorAttr) {
+                  activeAttrIds.add(colorAttr.id);
+                  if (!activeAttrValues[colorAttr.id]) activeAttrValues[colorAttr.id] = new Set();
+                  activeAttrValues[colorAttr.id].add(v.color);
+                }
+              }
+              if (v.quality) {
+                const qAttr = data.find(
+                  (a: AttributeItem) =>
+                    a.name.toLowerCase() === "quality" || a.name.toLowerCase() === "grade"
+                );
+                if (qAttr) {
+                  activeAttrIds.add(qAttr.id);
+                  if (!activeAttrValues[qAttr.id]) activeAttrValues[qAttr.id] = new Set();
+                  activeAttrValues[qAttr.id].add(v.quality);
                 }
               }
             });
 
-            if (matchedIds.length > 0) {
-              setSelectedAttrIds(matchedIds);
-              setSelectedAttrValues(matchedValues);
-            }
+            const finalValues: Record<string, string[]> = {};
+            Object.entries(activeAttrValues).forEach(([id, set]) => {
+              finalValues[id] = Array.from(set);
+            });
+
+            setSelectedAttrIds(Array.from(activeAttrIds));
+            setSelectedAttrValues(finalValues);
+          } else {
+            // NEW product form: ZERO pre-selection
+            setSelectedAttrIds([]);
+            setSelectedAttrValues({});
           }
         }
       } catch (err) {
@@ -103,7 +127,7 @@ export function VariationsGenerator({
         setLoading(false);
       }
     })();
-  }, [productType, condition, brandName]);
+  }, [variants]);
 
   // Handle attribute selection toggle
   const toggleAttribute = (attrId: string) => {
@@ -116,14 +140,11 @@ export function VariationsGenerator({
       });
     } else {
       setSelectedAttrIds((prev) => [...prev, attrId]);
-      // default select first 2 values if available
-      const attr = availableAttributes.find((a) => a.id === attrId);
-      if (attr && attr.values.length > 0) {
-        setSelectedAttrValues((prev) => ({
-          ...prev,
-          [attrId]: attr.values.slice(0, 2).map((v) => v.value),
-        }));
-      }
+      // TASK 1b: User ticked an attribute - do NOT select any values automatically!
+      setSelectedAttrValues((prev) => ({
+        ...prev,
+        [attrId]: [],
+      }));
     }
   };
 
@@ -216,10 +237,10 @@ export function VariationsGenerator({
     onChange([
       ...variants,
       {
-        sku: `${prefix}-V${variants.length + 1}`,
+        sku: `${prefix}-CUSTOM-${variants.length + 1}`,
         color: null,
         quality: null,
-        attributes: {},
+        attributes: { customName: "" },
         buyingPrice: defaultBuyingPrice || 0,
         price: defaultSellingPrice || 0,
         wholesalePrice: defaultWholesalePrice || 0,
@@ -392,25 +413,93 @@ export function VariationsGenerator({
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {variants.map((variant, idx) => {
-                  const specName = Object.entries(variant.attributes || {})
-                    .map(([k, v]) => `${k}: ${v}`)
-                    .join(" • ") || (variant.color || variant.quality ? `${variant.color || ""} ${variant.quality || ""}`.trim() : `Variant #${idx + 1}`);
+                  const isCustomVariant =
+                    Boolean(variant.attributes?.customName !== undefined) ||
+                    (!variant.color && !variant.quality && Object.keys(variant.attributes || {}).length === 0);
+
+                  const specEntries = Object.entries(variant.attributes || {}).filter(
+                    ([k]) => k !== "customName"
+                  );
+                  if (variant.color && !specEntries.some(([k]) => k.toLowerCase() === "color")) {
+                    specEntries.unshift(["Color", variant.color]);
+                  }
+                  if (variant.quality && !specEntries.some(([k]) => k.toLowerCase() === "quality")) {
+                    specEntries.push(["Quality", variant.quality]);
+                  }
 
                   return (
                     <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
                       <td className="py-2.5 px-3">
-                        <span className="font-semibold text-slate-800 block">{specName}</span>
-                        {variant.color && (
-                          <span className="text-[10px] text-slate-400">Color: {variant.color}</span>
+                        {isCustomVariant ? (
+                          <div className="space-y-1">
+                            <Input
+                              type="text"
+                              value={variant.attributes?.customName || ""}
+                              onChange={(e) => {
+                                const nextAttrs = {
+                                  ...(variant.attributes || {}),
+                                  customName: e.target.value,
+                                };
+                                updateVariant(idx, "attributes", nextAttrs);
+                              }}
+                              placeholder="e.g. Special Edition (Required)"
+                              required
+                              className="h-8 text-xs bg-white border-amber-300 focus:border-emerald-500 font-medium min-w-[190px]"
+                            />
+                            <span className="text-[10px] text-amber-700 font-medium block">
+                              Custom Variant Spec (Required)
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="flex flex-wrap items-center gap-1.5 py-0.5">
+                            {specEntries.length > 0 ? (
+                              specEntries.map(([k, v], sIdx) => (
+                                <span
+                                  key={sIdx}
+                                  title={`${k}: ${v}`}
+                                  className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-800 text-[11px] font-medium border border-slate-200 cursor-default transition-colors"
+                                >
+                                  <span className="text-slate-400 font-normal mr-1">{k}:</span>
+                                  <span className="font-semibold">{v}</span>
+                                </span>
+                              ))
+                            ) : (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 text-xs font-semibold">
+                                {variant.sku || "Standard"}
+                              </span>
+                            )}
+                          </div>
                         )}
                       </td>
                       <td className="py-2 px-3">
-                        <Input
-                          type="text"
-                          value={variant.sku}
-                          onChange={(e) => updateVariant(idx, "sku", e.target.value)}
-                          className="h-8 text-xs font-mono w-32 bg-white"
-                        />
+                        <div className="flex items-center gap-1">
+                          <Input
+                            type="text"
+                            value={variant.sku}
+                            onChange={(e) => updateVariant(idx, "sku", e.target.value)}
+                            className="h-8 text-xs font-mono w-28 bg-white"
+                          />
+                          <button
+                            type="button"
+                            title="Generate Code / Refresh SKU"
+                            onClick={() => {
+                              const prefix = (baseSku || "PROD").trim().toUpperCase();
+                              const comboValues = Object.entries(variant.attributes || {})
+                                .filter(([k]) => k !== "customName")
+                                .map(([, v]) => v.replace(/\s+/g, "").toUpperCase());
+                              const suffix =
+                                comboValues.length > 0
+                                  ? comboValues.join("-")
+                                  : variant.attributes?.customName
+                                  ? variant.attributes.customName.replace(/\s+/g, "").toUpperCase()
+                                  : `V${idx + 1}`;
+                              updateVariant(idx, "sku", `${prefix}-${suffix}`);
+                            }}
+                            className="h-8 px-1.5 text-[10px] font-semibold rounded bg-slate-100 hover:bg-slate-200 text-slate-600 border border-slate-200 transition-colors"
+                          >
+                            Gen
+                          </button>
+                        </div>
                       </td>
                       <td className="py-2 px-2">
                         <Input

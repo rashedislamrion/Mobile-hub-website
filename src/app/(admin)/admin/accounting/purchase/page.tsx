@@ -35,6 +35,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
 import { apiGet, apiPost } from "@/lib/api-client";
+import { AdminTableState } from "@/components/admin/AdminTableState";
 
 interface PurchaseOrderItem {
   id: string;
@@ -94,6 +95,7 @@ export default function PurchaseOrdersPage() {
   const [data, setData] = useState<PurchaseOrderItem[]>([]);
   const [summary, setSummary] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   // Filters
   const [searchQuery, setSearchQuery] = useState("");
@@ -122,6 +124,7 @@ export default function PurchaseOrdersPage() {
   const loadData = useCallback(async () => {
     try {
       setIsLoading(true);
+      setError(null);
       const params: Record<string, any> = {
         page: currentPage,
         limit: 20,
@@ -150,6 +153,7 @@ export default function PurchaseOrdersPage() {
         }
       }
     } catch (err: any) {
+      setError(err.message || "Failed to load purchase orders");
       toast.error(err.message || "Failed to load purchase orders");
     } finally {
       setIsLoading(false);
@@ -398,21 +402,19 @@ export default function PurchaseOrdersPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {isLoading ? (
-                <tr>
-                  <td colSpan={8} className="py-12 text-center text-slate-400">
-                    Loading purchase orders...
-                  </td>
-                </tr>
-              ) : data.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="py-12 text-center text-slate-400 space-y-1">
-                    <p className="font-medium text-slate-600">No purchase records found</p>
-                    <p className="text-[11px]">Click "+ Add New Purchase" above to record your first supplier intake</p>
-                  </td>
-                </tr>
-              ) : (
-                data.map((po) => {
+              <AdminTableState
+                isLoading={isLoading}
+                error={error}
+                isEmpty={data.length === 0}
+                onRetry={loadData}
+                colSpan={8}
+                loadingRows={5}
+                emptyTitle="No records found"
+                emptyDescription="No purchase records found. Click '+ Add New Purchase' above to record your first supplier intake."
+                emptyActionLabel="+ Add New Purchase"
+                onEmptyAction={() => router.push("/admin/accounting/purchase/create")}
+              >
+                {data.map((po) => {
                   const { datePart, timePart } = formatDateTime(po.createdAt);
                   const total = Number(po.grandTotal || 0);
                   const paid = Number(po.amountPaid || 0);
@@ -547,8 +549,8 @@ export default function PurchaseOrdersPage() {
                       </td>
                     </tr>
                   );
-                })
-              )}
+                })}
+              </AdminTableState>
             </tbody>
           </table>
         </div>
@@ -556,8 +558,9 @@ export default function PurchaseOrdersPage() {
         {/* Pagination Footer */}
         <div className="p-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
           <div>
-            Showing {(currentPage - 1) * 20 + 1} to {Math.min(currentPage * 20, totalCount)} of{" "}
-            {totalCount} results
+            {totalCount === 0
+              ? "Showing 0 results"
+              : `Showing ${(currentPage - 1) * 20 + 1} to ${Math.min(currentPage * 20, totalCount)} of ${totalCount.toLocaleString()} results`}
           </div>
 
           <div className="flex items-center gap-1.5">

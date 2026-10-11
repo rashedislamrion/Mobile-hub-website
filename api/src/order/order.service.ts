@@ -54,24 +54,20 @@ const ALLOWED_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   CANCELLED: [],
 };
 
+import { BranchScopeService } from '../common/branch/branch-scope.service';
+
 @Injectable()
 export class OrderService {
   private readonly logger = new Logger(OrderService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private branchScopeService: BranchScopeService,
+  ) {}
 
   private async checkBranchScope(user: JwtPayload, targetBranchId?: string) {
     if (!user || user.userType !== 'STAFF' || !user.roleId) return;
-    const role = await this.prisma.role.findUnique({
-      where: { id: user.roleId },
-    });
-    if (role?.scope === 'OWN_BRANCH') {
-      if (targetBranchId && user.branchId && targetBranchId !== user.branchId) {
-        throw new ForbiddenException(
-          'You can only access or modify data belonging to your own branch.',
-        );
-      }
-    }
+    await this.branchScopeService.validateBranchAccess(user, targetBranchId);
   }
 
   async findAll(
@@ -97,17 +93,12 @@ export class OrderService {
     const where: Prisma.OrderWhereInput = {};
 
     // Branch scoping
-    if (user?.userType === 'STAFF' && user.roleId) {
-      const role = await this.prisma.role.findUnique({
-        where: { id: user.roleId },
-      });
-      if (role?.scope === 'OWN_BRANCH' && user.branchId) {
-        where.branchId = user.branchId;
-      } else if (query.branchId || query.branch) {
-        where.branchId = query.branchId || query.branch;
-      }
-    } else if (query.branchId || query.branch) {
-      where.branchId = query.branchId || query.branch;
+    const branchFilter = await this.branchScopeService.getBranchFilter(
+      user,
+      query.branchId || query.branch,
+    );
+    if (branchFilter !== undefined) {
+      where.branchId = branchFilter;
     }
 
     if (query.status) where.status = query.status;
@@ -354,18 +345,26 @@ export class OrderService {
               );
             }
 
-            // Decrement variant stock
-            if (variant.stock <= 0) {
+            // Availability gate for serialized phone sales is the PhoneUnit
+            if (
+              dto.branchId &&
+              phoneUnit.branchId &&
+              phoneUnit.branchId !== dto.branchId
+            ) {
               throw new BadRequestException(
-                `Insufficient stock for "${product.name}".`,
+                `Phone unit (IMEI: ${phoneUnit.imei1}) is registered to a different branch.`,
               );
             }
-            await tx.productVariant.update({
-              where: { id: variant.id },
-              data: { stock: { decrement: 1 } },
-            });
 
-            // Decrement branch inventory if present
+            // Decrement variant stock if available without going below zero
+            if (variant.stock > 0) {
+              await tx.productVariant.update({
+                where: { id: variant.id },
+                data: { stock: { decrement: 1 } },
+              });
+            }
+
+            // Decrement branch inventory if present and available without going below zero
             if (dto.branchId) {
               const branchInv = await tx.branchInventory.findUnique({
                 where: {
@@ -375,20 +374,17 @@ export class OrderService {
                   },
                 },
               });
-              if (!branchInv || branchInv.quantity <= 0) {
-                throw new BadRequestException(
-                  `Insufficient branch stock for "${product.name}".`,
-                );
-              }
-              await tx.branchInventory.update({
-                where: {
-                  branchId_productVariantId: {
-                    branchId: dto.branchId,
-                    productVariantId: variant.id,
+              if (branchInv && branchInv.quantity > 0) {
+                await tx.branchInventory.update({
+                  where: {
+                    branchId_productVariantId: {
+                      branchId: dto.branchId,
+                      productVariantId: variant.id,
+                    },
                   },
-                },
-                data: { quantity: { decrement: 1 } },
-              });
+                  data: { quantity: { decrement: 1 } },
+                });
+              }
             }
 
             phoneUnitAssignments.push({
@@ -1372,5 +1368,57 @@ export class OrderService {
     } finally {
       await browser.close().catch(() => {});
     }
+  }
+
+  async remove(id: string, user?: JwtPayload) {
+    const order = await this.findOne(id, user);
+
+    if (order.status !== OrderStatus.PENDING && order.status !== OrderStatus.CANCELLED) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        message: `Cannot delete order "${order.orderCode}" with status "${order.status}". Please cancel the order instead.`,
+      });
+    }
+
+    const paymentCount = await this.prisma.payment.count({ where: { orderId: id } });
+    if (paymentCount > 0 || Number(order.paidAmount) > 0) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        message: `Cannot delete order "${order.orderCode}" because it has recorded payment transactions. Financial records cannot be deleted.`,
+      });
+    }
+
+    if (order.shipment) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        message: `Cannot delete order "${order.orderCode}" because it has a linked courier shipment.`,
+      });
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      if (order.status === OrderStatus.PENDING) {
+        for (const item of order.items) {
+          if (item.variantId) {
+            await tx.branchInventory.updateMany({
+              where: {
+                branchId: order.branchId,
+                productVariantId: item.variantId,
+              },
+              data: {
+                quantity: { increment: item.quantity },
+              },
+            });
+          }
+        }
+      }
+
+      await tx.orderStatusHistory.deleteMany({ where: { orderId: id } });
+      await tx.orderNote.deleteMany({ where: { orderId: id } });
+      await tx.orderItem.deleteMany({ where: { orderId: id } });
+      return tx.order.delete({ where: { id } });
+    });
   }
 }

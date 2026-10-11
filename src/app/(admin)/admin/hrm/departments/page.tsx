@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/lib/api-client";
 import { Badge } from "@/components/ui/badge";
+import { AdminTableState } from "@/components/admin/AdminTableState";
 
 interface DepartmentRecord {
   id: string;
@@ -36,6 +37,7 @@ export default function DepartmentsPage() {
   const { setTitle, setBadge, setDateFilter } = useAdminPage();
   const [data, setData] = useState<DepartmentRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingDept, setEditingDept] = useState<DepartmentRecord | null>(null);
@@ -54,12 +56,14 @@ export default function DepartmentsPage() {
   const loadData = useCallback(async () => {
     try {
       setIsLoading(true);
+      setError(null);
       const params: Record<string, any> = {};
       if (searchQuery.trim()) params.search = searchQuery.trim();
 
       const res = await apiGet<DepartmentRecord[]>("/departments", params);
       setData(Array.isArray(res) ? res : []);
     } catch (err: any) {
+      setError(err.message || "Failed to load departments");
       toast.error(err.message || "Failed to load departments");
     } finally {
       setIsLoading(false);
@@ -193,23 +197,19 @@ export default function DepartmentsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border text-foreground">
-              {isLoading ? (
-                <tr>
-                  <td colSpan={5} className="p-8 text-center text-muted-foreground">
-                    <div className="flex items-center justify-center gap-2">
-                      <div className="h-5 w-5 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin" />
-                      <span>Loading departments...</span>
-                    </div>
-                  </td>
-                </tr>
-              ) : filteredData.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="p-8 text-center text-muted-foreground">
-                    No departments found.
-                  </td>
-                </tr>
-              ) : (
-                filteredData.map((dept, index) => (
+              <AdminTableState
+                isLoading={isLoading}
+                error={error}
+                isEmpty={filteredData.length === 0}
+                onRetry={loadData}
+                colSpan={5}
+                loadingRows={5}
+                emptyTitle="No departments found"
+                emptyDescription="No departments match your search."
+                emptyActionLabel="Add Department"
+                onEmptyAction={() => handleOpenDialog()}
+              >
+                {filteredData.map((dept, index) => (
                   <tr key={dept.id} className="hover:bg-muted/30 transition-colors">
                     <td className="p-4 text-center font-mono text-xs text-muted-foreground">
                       #{index + 1}
@@ -265,8 +265,8 @@ export default function DepartmentsPage() {
                       </div>
                     </td>
                   </tr>
-                ))
-              )}
+                ))}
+              </AdminTableState>
             </tbody>
           </table>
         </div>

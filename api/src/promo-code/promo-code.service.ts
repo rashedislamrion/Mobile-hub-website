@@ -229,7 +229,17 @@ export class PromoCodeService {
   }
 
   async remove(id: string) {
-    await this.findOne(id);
+    const promo = await this.findOne(id);
+    if (promo.usedCount > 0) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        message: `Cannot delete promo code "${promo.code}". It has been used in ${promo.usedCount} order(s). Please set its status to INACTIVE or EXPIRED instead.`,
+        canDeactivate: true,
+        blockers: { usedCount: promo.usedCount },
+      });
+    }
+
     return this.prisma.promoCode.delete({ where: { id } });
   }
 }

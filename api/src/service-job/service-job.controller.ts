@@ -54,20 +54,19 @@ export class ServiceJobController {
     const isTech = user.roleName?.toLowerCase().includes('technician');
     const effectiveTechId = isTech ? user.sub : technicianId;
 
-    // Scoping for Branch Admin
-    const isGlobal = (user as any).roleScope === 'GLOBAL';
-    const effectiveBranch = !isGlobal && user.branchId ? user.branchId : branch;
-
-    return this.serviceJobService.findAll({
-      status,
-      branch: effectiveBranch,
-      technicianId: effectiveTechId,
-      search,
-      page,
-      limit,
-      startDate,
-      endDate,
-    });
+    return this.serviceJobService.findAll(
+      {
+        status,
+        branch,
+        technicianId: effectiveTechId,
+        search,
+        page,
+        limit,
+        startDate,
+        endDate,
+      },
+      user,
+    );
   }
 
   @RequirePermission({
@@ -99,8 +98,8 @@ export class ServiceJobController {
     action: PermissionAction.CREATE,
   })
   @Post()
-  create(@Body() dto: CreateServiceJobDto) {
-    return this.serviceJobService.create(dto);
+  create(@Body() dto: CreateServiceJobDto, @CurrentUser() user: JwtPayload) {
+    return this.serviceJobService.create(dto, user);
   }
 
   @RequirePermission({
@@ -109,8 +108,8 @@ export class ServiceJobController {
   })
   @Get(':id')
   async findOne(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    const job = await this.serviceJobService.findOne(id);
     const isTech = user.roleName?.toLowerCase().includes('technician');
+    const job = await this.serviceJobService.findOne(id, user);
     if (isTech && (!job || job.technicianId !== user.sub)) {
       throw new ForbiddenException(
         'Access denied: You can only view your own service jobs',
@@ -124,8 +123,12 @@ export class ServiceJobController {
     action: PermissionAction.UPDATE,
   })
   @Patch(':id/assign')
-  assignTechnician(@Param('id') id: string, @Body() dto: AssignTechnicianDto) {
-    return this.serviceJobService.assignTechnician(id, dto);
+  assignTechnician(
+    @Param('id') id: string,
+    @Body() dto: AssignTechnicianDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.serviceJobService.assignTechnician(id, dto, user);
   }
 
   @RequirePermission({
@@ -136,8 +139,9 @@ export class ServiceJobController {
   updateStatus(
     @Param('id') id: string,
     @Body() dto: UpdateServiceJobStatusDto,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.serviceJobService.updateStatus(id, dto);
+    return this.serviceJobService.updateStatus(id, dto, user);
   }
 
   @RequirePermission({
@@ -145,8 +149,12 @@ export class ServiceJobController {
     action: PermissionAction.UPDATE,
   })
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateServiceJobDto) {
-    return this.serviceJobService.update(id, dto);
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateServiceJobDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.serviceJobService.update(id, dto, user);
   }
 
   @RequirePermission({
@@ -154,7 +162,7 @@ export class ServiceJobController {
     action: PermissionAction.DELETE,
   })
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.serviceJobService.remove(id);
+  remove(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.serviceJobService.remove(id, user);
   }
 }

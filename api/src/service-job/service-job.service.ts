@@ -21,10 +21,15 @@ import {
   ServiceMaterialSourceType,
 } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
+import { BranchScopeService } from '../common/branch/branch-scope.service';
 
 @Injectable()
 export class ServiceJobService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private branchScopeService: BranchScopeService,
+  ) {}
 
   async getNextInvoiceNo(): Promise<{ invoiceNo: string }> {
     const count = await this.prisma.serviceJob.count();
@@ -33,16 +38,19 @@ export class ServiceJobService {
     return { invoiceNo: `INV-${padded}` };
   }
 
-  async findAll(query: {
-    status?: ServiceJobStatus;
-    branch?: string;
-    technicianId?: string;
-    search?: string;
-    page?: number;
-    limit?: number;
-    startDate?: string;
-    endDate?: string;
-  }) {
+  async findAll(
+    query: {
+      status?: ServiceJobStatus;
+      branch?: string;
+      technicianId?: string;
+      search?: string;
+      page?: number;
+      limit?: number;
+      startDate?: string;
+      endDate?: string;
+    },
+    user?: JwtPayload,
+  ) {
     const page = Math.max(1, Number(query.page) || 1);
     const limit = Math.max(1, Math.min(100, Number(query.limit) || 20));
     const skip = (page - 1) * limit;
@@ -51,11 +59,13 @@ export class ServiceJobService {
 
     if (query.status) where.status = query.status;
     if (query.technicianId) where.technicianId = query.technicianId;
-    if (query.branch) {
-      where.OR = [
-        { order: { branchId: query.branch } },
-        { technician: { branchId: query.branch } },
-      ];
+
+    const branchFilter = await this.branchScopeService.getBranchFilter(
+      user,
+      query.branch,
+    );
+    if (branchFilter !== undefined) {
+      where.branchId = branchFilter;
     }
 
     if (query.search?.trim()) {
@@ -166,10 +176,11 @@ export class ServiceJobService {
     });
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, user?: JwtPayload) {
     const job = await this.prisma.serviceJob.findUnique({
       where: { id },
       include: {
+        branch: true,
         technician: true,
         customer: true,
         supplier: true,
@@ -192,19 +203,27 @@ export class ServiceJobService {
       },
     });
     if (!job) throw new NotFoundException(`Service job "${id}" not found.`);
+    if (user) {
+      await this.branchScopeService.validateBranchAccess(user, job.branchId);
+    }
     return job;
   }
 
-  async create(dto: CreateServiceJobDto) {
+  async create(dto: CreateServiceJobDto, user?: JwtPayload) {
     const order = await this.prisma.order.findUnique({
       where: { id: dto.orderId },
     });
     if (!order)
       throw new NotFoundException(`Order "${dto.orderId}" not found.`);
 
+    if (user) {
+      await this.branchScopeService.validateBranchAccess(user, order.branchId);
+    }
+
     return this.prisma.serviceJob.create({
       data: {
         orderId: dto.orderId,
+        branchId: order.branchId,
         technicianId: dto.technicianId || null,
         device: dto.device,
         issueDescription: dto.issueDescription,
@@ -215,6 +234,7 @@ export class ServiceJobService {
         finalAmount: dto.serviceCharge,
       },
       include: {
+        branch: true,
         technician: true,
         order: true,
       },
@@ -263,16 +283,10 @@ export class ServiceJobService {
       }
 
       // 3. Resolve Branch
-      let branchId = dto.branchId;
-      if (!branchId && currentUser?.branchId) {
-        branchId = currentUser.branchId;
-      }
-      if (!branchId) {
-        const defaultBranch = await tx.branch.findFirst({
-          orderBy: { createdAt: 'asc' },
-        });
-        branchId = defaultBranch ? defaultBranch.id : '';
-      }
+      const branchId = await this.branchScopeService.determineCreateBranchId(
+        currentUser,
+        dto.branchId,
+      );
 
       // 4. Resolve Pricing & Profit Share
       const laborCost = Number(dto.laborCost || 0);
@@ -312,7 +326,11 @@ export class ServiceJobService {
         paymentStatus = PaymentStatus.DUE;
       }
 
-      const orderCode = `SRV-${invoiceNo.replace(/[^A-Za-z0-9]/g, '')}`;
+      let orderCode = `SRV-${invoiceNo.replace(/[^A-Za-z0-9]/g, '')}`;
+      let counter = 1;
+      while (await tx.order.findUnique({ where: { orderCode } })) {
+        orderCode = `SRV-${invoiceNo.replace(/[^A-Za-z0-9]/g, '')}-${counter++}`;
+      }
 
       const order = await tx.order.create({
         data: {
@@ -345,6 +363,7 @@ export class ServiceJobService {
         data: {
           invoiceNo,
           orderId: order.id,
+          branchId,
           customerId: customer?.id || null,
           customerName: dto.customerName,
           customerPhone: dto.customerPhone,
@@ -509,9 +528,12 @@ export class ServiceJobService {
     });
   }
 
-  async assignTechnician(id: string, dto: AssignTechnicianDto) {
-    const job = await this.prisma.serviceJob.findUnique({ where: { id } });
-    if (!job) throw new NotFoundException(`Service job "${id}" not found.`);
+  async assignTechnician(
+    id: string,
+    dto: AssignTechnicianDto,
+    user?: JwtPayload,
+  ) {
+    const job = await this.findOne(id, user);
 
     // Recompute profit share if technician changed
     let technicianProfitShare = 0;
@@ -546,9 +568,12 @@ export class ServiceJobService {
     });
   }
 
-  async updateStatus(id: string, dto: UpdateServiceJobStatusDto) {
-    const job = await this.prisma.serviceJob.findUnique({ where: { id } });
-    if (!job) throw new NotFoundException(`Service job "${id}" not found.`);
+  async updateStatus(
+    id: string,
+    dto: UpdateServiceJobStatusDto,
+    user?: JwtPayload,
+  ) {
+    const job = await this.findOne(id, user);
 
     const updatedJob = await this.prisma.serviceJob.update({
       where: { id },
@@ -566,7 +591,9 @@ export class ServiceJobService {
     return updatedJob;
   }
 
-  async update(id: string, dto: UpdateServiceJobDto) {
+  async update(id: string, dto: UpdateServiceJobDto, user?: JwtPayload) {
+    await this.findOne(id, user);
+
     return this.prisma.$transaction(async (tx) => {
       const job = await tx.serviceJob.findUnique({
         where: { id },
@@ -744,15 +771,40 @@ export class ServiceJobService {
     });
   }
 
-  async remove(id: string) {
-    return this.prisma.$transaction(async (tx) => {
-      const job = await tx.serviceJob.findUnique({ where: { id } });
-      if (!job) throw new NotFoundException(`Service job "${id}" not found.`);
+  async remove(id: string, user?: JwtPayload) {
+    const existing = await this.findOne(id, user);
 
-      if (job.orderId) {
-        await tx.payment.deleteMany({ where: { orderId: job.orderId } });
+    if (
+      existing.status === ServiceJobStatus.READY_FOR_PICKUP ||
+      existing.status === ServiceJobStatus.DELIVERED
+    ) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        message: `Cannot delete service job "${existing.invoiceNo || existing.id}". It is marked as ${existing.status}. Please cancel the service job instead.`,
+      });
+    }
+
+    if (existing.orderId) {
+      const paymentCount = await this.prisma.payment.count({
+        where: { orderId: existing.orderId },
+      });
+      if (paymentCount > 0) {
+        throw new ConflictException({
+          statusCode: 409,
+          error: 'Conflict',
+          message: `Cannot delete service job "${existing.invoiceNo || existing.id}" because it has ${paymentCount} recorded payment(s).`,
+        });
+      }
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      await tx.serviceJobMaterial.deleteMany({ where: { serviceJobId: id } });
+      if (existing.orderId) {
         await tx.serviceJob.delete({ where: { id } });
-        await tx.order.delete({ where: { id: job.orderId } });
+        await tx.orderItem.deleteMany({ where: { orderId: existing.orderId } });
+        await tx.orderStatusHistory.deleteMany({ where: { orderId: existing.orderId } });
+        await tx.order.delete({ where: { id: existing.orderId } });
       } else {
         await tx.serviceJob.delete({ where: { id } });
       }

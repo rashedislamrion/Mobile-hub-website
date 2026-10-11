@@ -18,10 +18,14 @@ import {
   PermissionAction,
 } from '@prisma/client';
 import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
+import { BranchScopeService } from '../common/branch/branch-scope.service';
 
 @Injectable()
 export class ReportService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private branchScopeService: BranchScopeService,
+  ) {}
 
   async hasPermission(
     roleId?: string,
@@ -72,35 +76,28 @@ export class ReportService {
   private async resolveBranchId(
     branchParam?: string,
     user?: JwtPayload,
-  ): Promise<string | undefined> {
-    // If user has role with OWN_BRANCH scope, strictly enforce their assigned branchId
-    if (user?.userType === 'STAFF' && user.roleId && user.branchId) {
-      const role = await this.prisma.role.findUnique({
-        where: { id: user.roleId },
+  ): Promise<any> {
+    let resolvedParam = branchParam;
+    if (
+      branchParam &&
+      branchParam !== 'ALL' &&
+      branchParam !== 'GLOBAL' &&
+      branchParam !== 'All Outlets' &&
+      branchParam !== 'All Branches'
+    ) {
+      const branch = await this.prisma.branch.findFirst({
+        where: {
+          OR: [
+            { id: branchParam },
+            { name: { equals: branchParam, mode: 'insensitive' } },
+          ],
+        },
+        select: { id: true },
       });
-      if (role?.scope === 'OWN_BRANCH') {
-        return user.branchId;
-      }
+      if (branch) resolvedParam = branch.id;
     }
 
-    if (
-      !branchParam ||
-      branchParam === 'ALL' ||
-      branchParam === 'GLOBAL' ||
-      branchParam === 'All Outlets' ||
-      branchParam === 'All Branches'
-    ) {
-      return undefined;
-    }
-    const branch = await this.prisma.branch.findFirst({
-      where: {
-        OR: [
-          { id: branchParam },
-          { name: { equals: branchParam, mode: 'insensitive' } },
-        ],
-      },
-    });
-    return branch ? branch.id : branchParam;
+    return this.branchScopeService.getBranchFilter(user, resolvedParam);
   }
 
   // ============================= PRODUCT ANALYTICS =============================
@@ -1486,12 +1483,15 @@ export class ReportService {
   }
 
   // ============================= FIX PASS 21: TECHNICIAN PERFORMANCE REPORT =============================
-  async getTechnicianPerformanceReport(query?: {
-    branch?: string;
-    dateFrom?: string;
-    dateTo?: string;
-  }) {
-    const report = await this.getGlobalServiceReport(query);
+  async getTechnicianPerformanceReport(
+    query?: {
+      branch?: string;
+      dateFrom?: string;
+      dateTo?: string;
+    },
+    user?: JwtPayload,
+  ) {
+    const report = await this.getGlobalServiceReport(query, user);
     const performance = report.technicians.map((t) => {
       const completedJobs = t.jobs.filter(
         (j: any) => j.status === 'DELIVERED',
@@ -1520,12 +1520,15 @@ export class ReportService {
   }
 
   // ============================= FIX PASS 21: TECHNICIAN PROFIT REPORT =============================
-  async getTechnicianProfitReport(query?: {
-    branch?: string;
-    dateFrom?: string;
-    dateTo?: string;
-  }) {
-    const report = await this.getGlobalServiceReport(query);
+  async getTechnicianProfitReport(
+    query?: {
+      branch?: string;
+      dateFrom?: string;
+      dateTo?: string;
+    },
+    user?: JwtPayload,
+  ) {
+    const report = await this.getGlobalServiceReport(query, user);
     const profitData = report.technicians.map((t) => ({
       technicianId: t.technicianId,
       name: t.technicianName,
@@ -1619,14 +1622,20 @@ export class ReportService {
   }
 
   // ============================= FIX PASS 21: MARKETING FEE COLLECTION REPORT =============================
-  async getMarketingFeeReport(query?: {
-    branch?: string;
-    dateFrom?: string;
-    dateTo?: string;
-  }) {
+  async getMarketingFeeReport(
+    query?: {
+      branch?: string;
+      dateFrom?: string;
+      dateTo?: string;
+    },
+    user?: JwtPayload,
+  ) {
     const where: Prisma.ServiceJobWhereInput = {
       referralNumber: { not: null },
     };
+
+    const branchId = await this.resolveBranchId(query?.branch, user);
+    if (branchId) where.branchId = branchId;
 
     if (query?.dateFrom || query?.dateTo) {
       where.createdAt = {};
@@ -2055,15 +2064,20 @@ export class ReportService {
   }
 
   // ============================= PRODUCT STOCK REPORT =============================
-  async getProductStockReport(query?: {
-    inStockOnly?: string;
-    branch?: string;
-    brand?: string;
-    category?: string;
-    quality?: string;
-    color?: string;
-    search?: string;
-  }) {
+  async getProductStockReport(
+    query?: {
+      inStockOnly?: string;
+      branch?: string;
+      brand?: string;
+      category?: string;
+      quality?: string;
+      color?: string;
+      search?: string;
+    },
+    user?: JwtPayload,
+  ) {
+    const branchId = await this.resolveBranchId(query?.branch, user);
+
     const productWhere: Prisma.ProductWhereInput = {
       status: { not: 'DRAFT' },
     };
@@ -2079,9 +2093,6 @@ export class ReportService {
       product: productWhere,
     };
 
-    if (query?.inStockOnly === 'true') {
-      where.stock = { gt: 0 };
-    }
     if (query?.quality && query.quality !== 'ALL') {
       where.quality = query.quality;
     }
@@ -2100,6 +2111,9 @@ export class ReportService {
     const variants = await this.prisma.productVariant.findMany({
       where,
       include: {
+        branchInventories: branchId !== undefined
+          ? { where: typeof branchId === 'string' ? { branchId } : { branchId } }
+          : true,
         product: {
           include: {
             brand: { select: { id: true, name: true } },
@@ -2115,19 +2129,34 @@ export class ReportService {
       orderBy: [{ product: { name: 'asc' } }, { sku: 'asc' }],
     });
 
-    const totalStockQty = variants.reduce((sum, v) => sum + v.stock, 0);
-    const totalStockValueFIFO = variants.reduce((sum, v) => {
+    const mappedVariants = variants.map((v) => {
+      const effectiveStock = branchId !== undefined
+        ? v.branchInventories.reduce((sum, b) => sum + Number(b.quantity), 0)
+        : v.stock;
+      return {
+        ...v,
+        effectiveStock,
+      };
+    }).filter((v) => {
+      if (query?.inStockOnly === 'true') {
+        return v.effectiveStock > 0;
+      }
+      return true;
+    });
+
+    const totalStockQty = mappedVariants.reduce((sum, v) => sum + v.effectiveStock, 0);
+    const totalStockValueFIFO = mappedVariants.reduce((sum, v) => {
       const unitCost = Number(
         v.purchaseOrderItems?.[0]?.unitCost || Number(v.price) * 0.7,
       );
-      return sum + Math.max(0, v.stock) * unitCost;
+      return sum + Math.max(0, v.effectiveStock) * unitCost;
     }, 0);
-    const outOfStockCount = variants.filter((v) => v.stock <= 0).length;
-    const lowStockCount = variants.filter(
-      (v) => v.stock > 0 && v.stock <= 5,
+    const outOfStockCount = mappedVariants.filter((v) => v.effectiveStock <= 0).length;
+    const lowStockCount = mappedVariants.filter(
+      (v) => v.effectiveStock > 0 && v.effectiveStock <= 5,
     ).length;
 
-    const data = variants.map((v) => ({
+    const data = mappedVariants.map((v) => ({
       id: v.id,
       productId: v.productId,
       productName: v.product.name,
@@ -2138,14 +2167,14 @@ export class ReportService {
       color: v.color || 'Standard',
       quality: v.quality || 'Original',
       sku: v.sku,
-      stock: v.stock,
+      stock: v.effectiveStock,
       buyingPrice: Number(
         v.purchaseOrderItems?.[0]?.unitCost || Number(v.price) * 0.7,
       ),
       sellingPrice: Number(v.price),
       salePrice: v.product.salePrice ? Number(v.product.salePrice) : null,
       wholesalePrice: v.wholesalePrice ? Number(v.wholesalePrice) : null,
-      branch: 'All Branches',
+      branch: query?.branch || 'All Branches',
     }));
 
     return {

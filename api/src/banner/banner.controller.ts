@@ -10,6 +10,7 @@ import {
   UseGuards,
   UseInterceptors,
   UploadedFile,
+  BadRequestException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
@@ -74,6 +75,9 @@ export class BannerController {
       createBannerDto.imageUrl =
         (await resolveUploadedFile(file, 'banners')) ||
         `/uploads/banners/${file.filename}`;
+    }
+    if (!createBannerDto.imageUrl || !createBannerDto.imageUrl.trim()) {
+      throw new BadRequestException('Banner image is required');
     }
     return this.bannerService.create(createBannerDto);
   }

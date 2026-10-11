@@ -12,6 +12,8 @@ import { CreatePhoneUnitDto } from './dto/phone-unit.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { RequirePermission } from '../auth/decorators/require-permission.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import { ModuleName, PermissionAction, PhoneUnitStatus } from '@prisma/client';
 
 @Controller('phone-units')
@@ -35,9 +37,10 @@ export class PhoneUnitController {
   @Get('available')
   getAvailable(
     @Query('variantId') variantId: string,
+    @CurrentUser() user: JwtPayload,
     @Query('branchId') branchId?: string,
   ) {
-    return this.phoneUnitService.getAvailableUnits(variantId, branchId);
+    return this.phoneUnitService.getAvailableUnits(variantId, branchId, user);
   }
 
   @RequirePermission({
@@ -46,6 +49,7 @@ export class PhoneUnitController {
   })
   @Get()
   findAll(
+    @CurrentUser() user: JwtPayload,
     @Query('branchId') branchId?: string,
     @Query('status') status?: PhoneUnitStatus,
     @Query('variantId') variantId?: string,
@@ -53,14 +57,17 @@ export class PhoneUnitController {
     @Query('page') page?: number,
     @Query('limit') limit?: number,
   ) {
-    return this.phoneUnitService.findAll({
-      branchId,
-      status,
-      variantId,
-      search,
-      page,
-      limit,
-    });
+    return this.phoneUnitService.findAll(
+      {
+        branchId,
+        status,
+        variantId,
+        search,
+        page,
+        limit,
+      },
+      user,
+    );
   }
 
   @RequirePermission({
@@ -68,8 +75,8 @@ export class PhoneUnitController {
     action: PermissionAction.READ,
   })
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.phoneUnitService.findOne(id);
+  findOne(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.phoneUnitService.findOne(id, user);
   }
 
   @RequirePermission({
@@ -77,7 +84,10 @@ export class PhoneUnitController {
     action: PermissionAction.CREATE,
   })
   @Post()
-  create(@Body() dto: CreatePhoneUnitDto) {
-    return this.phoneUnitService.create(dto);
+  create(
+    @Body() dto: CreatePhoneUnitDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.phoneUnitService.create(dto, user);
   }
 }

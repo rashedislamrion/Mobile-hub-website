@@ -5,9 +5,10 @@ interface ColoredStatCardProps {
   label: string;
   value: string | number;
   colorTint: "blue" | "teal" | "orange" | "peach" | "green" | "purple" | "yellow" | "red" | "pink" | "gray";
+  subtitle?: ReactNode;
 }
 
-export function ColoredStatCard({ icon, label, value, colorTint }: ColoredStatCardProps) {
+export function ColoredStatCard({ icon, label, value, colorTint, subtitle }: ColoredStatCardProps) {
   const getColors = () => {
     switch (colorTint) {
       case "blue":
@@ -45,7 +46,14 @@ export function ColoredStatCard({ icon, label, value, colorTint }: ColoredStatCa
         </div>
       </div>
       <div className="mt-4">
-        <p className="text-sm font-medium text-slate-600 mb-1">{label}</p>
+        <div className="flex items-center justify-between gap-1 mb-1">
+          <p className="text-sm font-medium text-slate-600">{label}</p>
+          {subtitle && (
+            <span className="text-[11px] font-normal text-slate-500 bg-white/70 px-1.5 py-0.5 rounded border border-slate-200/60 shrink-0" title={typeof subtitle === "string" ? subtitle : undefined}>
+              {subtitle}
+            </span>
+          )}
+        </div>
         <p className="text-2xl font-bold text-slate-800">{value}</p>
       </div>
     </div>

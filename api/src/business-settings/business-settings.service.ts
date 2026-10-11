@@ -5,17 +5,18 @@ import {
   UpdateBusinessSetupDto,
   UpdateVerificationDto,
 } from './dto/business-settings.dto';
+import { OFFICIAL_CONTACT } from '../common/constants/contact';
 
 const defaultSettings = {
   general: {
     companyName: 'MobileHubBD',
     websiteName: 'MobileHubBD',
     websiteTitle: 'MobileHubBD - Smartphone Parts & Repair Shop',
-    email: 'mobilehubbd2@gmail.com',
-    emailAddress: 'mobilehubbd2@gmail.com',
-    phone: '01602670922',
-    mobileNumber: '01602670922',
-    address: '2/13 Eastern Plaza Shopping Complex, Hatirpool, Dhaka 1205',
+    email: OFFICIAL_CONTACT.email,
+    emailAddress: OFFICIAL_CONTACT.email,
+    phone: OFFICIAL_CONTACT.phone.display,
+    mobileNumber: OFFICIAL_CONTACT.phone.display,
+    address: OFFICIAL_CONTACT.address.en,
     timeZone: 'UTC/GMT +06:00 - Asia/Dhaka',
     currency: 'BDT',
     defaultCurrency: 'BDT',
@@ -25,7 +26,7 @@ const defaultSettings = {
     googlePlayStoreLink: 'https://play.google.com/store',
     appleStoreLink: 'https://apple.com/app-store',
     showAdminFooter: true,
-    hotlineNumber: '01602670922',
+    hotlineNumber: OFFICIAL_CONTACT.phone.display,
     footerText:
       "Bangladesh's leading destination for original spare parts and repair services.",
     paymentMethodsSetup: {
@@ -184,10 +185,10 @@ export class BusinessSettingsService {
     const currencyTax = settings.currencyTax;
 
     return {
-      companyName: general.companyName || 'MobileHubBD',
+      companyName: general.companyName || OFFICIAL_CONTACT.storeName,
       companyEmail:
-        general.emailAddress || general.email || 'mobilehubbd2@gmail.com',
-      companyPhone: general.mobileNumber || general.phone || '01602670922',
+        general.emailAddress || general.email || OFFICIAL_CONTACT.email,
+      companyPhone: general.mobileNumber || general.phone || OFFICIAL_CONTACT.phone.display,
       businessModel: general.businessModel || 'SINGLE_STORE',
       currencyPosition:
         general.currencyPosition || currencyTax.symbolPosition || 'LEFT',

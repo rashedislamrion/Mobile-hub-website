@@ -25,6 +25,9 @@ export class PayrollController {
   @Get()
   @RequirePermission({ module: ModuleName.HRM, action: PermissionAction.READ })
   findAll(
+    @CurrentUser() user: JwtPayload,
+    @Query('branch') branch?: string,
+    @Query('branchId') branchId?: string,
     @Query('department') department?: string,
     @Query('month') month?: string,
     @Query('status') status?: PayrollStatus,
@@ -32,14 +35,18 @@ export class PayrollController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    return this.payrollService.findAll({
-      department,
-      month,
-      status,
-      search,
-      page: page ? parseInt(page, 10) : undefined,
-      limit: limit ? parseInt(limit, 10) : undefined,
-    });
+    return this.payrollService.findAll(
+      {
+        branch: branchId || branch,
+        department,
+        month,
+        status,
+        search,
+        page: page ? parseInt(page, 10) : undefined,
+        limit: limit ? parseInt(limit, 10) : undefined,
+      },
+      user,
+    );
   }
 
   @Post('run')
@@ -47,20 +54,23 @@ export class PayrollController {
     module: ModuleName.HRM,
     action: PermissionAction.CREATE,
   })
-  runPayroll(@Body() runPayrollDto: RunPayrollDto) {
-    return this.payrollService.runPayroll(runPayrollDto);
+  runPayroll(
+    @Body() runPayrollDto: RunPayrollDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.payrollService.runPayroll(runPayrollDto, user);
   }
 
   @Get(':id/payslip')
   @RequirePermission({ module: ModuleName.HRM, action: PermissionAction.READ })
-  getPayslip(@Param('id') id: string) {
-    return this.payrollService.getPayslip(id);
+  getPayslip(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.payrollService.getPayslip(id, user);
   }
 
   @Get(':id')
   @RequirePermission({ module: ModuleName.HRM, action: PermissionAction.READ })
-  findOne(@Param('id') id: string) {
-    return this.payrollService.findOne(id);
+  findOne(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.payrollService.findOne(id, user);
   }
 
   @Patch(':id/mark-paid')
@@ -73,6 +83,6 @@ export class PayrollController {
     @Body() markPaidDto: MarkPaidDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.payrollService.markPaid(id, markPaidDto, user.sub);
+    return this.payrollService.markPaid(id, markPaidDto, user);
   }
 }

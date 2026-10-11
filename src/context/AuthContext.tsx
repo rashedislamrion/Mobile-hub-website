@@ -6,12 +6,19 @@ import {
   apiPost,
   getCustomerToken,
   setCustomerToken,
-  getStaffToken,
-  setStaffToken,
   onCustomerUnauthorized,
   onStaffUnauthorized,
   onUnauthorized,
 } from "@/lib/api-client";
+import {
+  getStaffToken,
+  setStaffToken,
+  getStaffUser,
+  setStaffUser,
+  clearStaffSession,
+} from "@/lib/staff-session";
+
+export { STAFF_USER_KEY, STAFF_TOKEN_KEY } from "@/lib/staff-session";
 
 export interface UserRole {
   id: string;
@@ -43,6 +50,12 @@ export interface AuthUser {
   role?: UserRole;
   branchId?: string;
   branch?: UserBranch;
+  isGlobal?: boolean;
+  allowedBranches?: Array<{
+    id: string;
+    name: string;
+    code?: string | null;
+  }>;
   permissions?: Array<{
     module: string;
     action: string;
@@ -60,26 +73,17 @@ export interface AuthContextType {
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
   hasPermission: (module: string, action: string) => boolean;
+  authError?: string | null;
+  retryVerification?: () => Promise<void>;
 }
 
 export const CUSTOMER_USER_KEY = "novamobile_customer_user";
-export const STAFF_USER_KEY = "novamobile_staff_user";
 
 // 1. CUSTOMER AUTH CONTEXT
 const CustomerAuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function CustomerAuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const saved = localStorage.getItem(CUSTOMER_USER_KEY);
-        return saved ? JSON.parse(saved) : null;
-      } catch {
-        return null;
-      }
-    }
-    return null;
-  });
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   const fetchCurrentUser = useCallback(async () => {
@@ -116,6 +120,21 @@ export function CustomerAuthProvider({ children }: { children: React.ReactNode }
         if (typeof window !== "undefined" && window.location.pathname.startsWith("/admin")) {
           if (mounted) setIsLoading(false);
           return;
+        }
+
+        // Restore cached customer profile on client mount
+        if (typeof window !== "undefined") {
+          try {
+            const saved = localStorage.getItem(CUSTOMER_USER_KEY);
+            if (saved) {
+              const parsed = JSON.parse(saved);
+              if (parsed && parsed.userType === "CUSTOMER" && mounted) {
+                setUser(parsed);
+              }
+            }
+          } catch {
+            // ignore
+          }
         }
 
         const token = getCustomerToken();
@@ -220,94 +239,189 @@ export function useCustomerAuth() {
   return context;
 }
 
-// 2. STAFF AUTH CONTEXT
-const StaffAuthContext = createContext<AuthContextType | undefined>(undefined);
+// 2. STAFF AUTH CONTEXT & PERSISTENT IN-MEMORY CACHE
+export const StaffAuthContext = createContext<AuthContextType | undefined>(undefined);
+
+interface VerifiedStaffCache {
+  user: AuthUser;
+  token: string;
+  verifiedAt: number;
+}
+
+let inMemoryStaffCache: VerifiedStaffCache | null = null;
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes in-memory cache
+
+async function fetchStaffProfileWithTimeout(
+  token: string,
+  timeoutMs = 10000,
+  retryCount = 1,
+): Promise<{ success: boolean; data?: AuthUser | null; isUnauthorized?: boolean; error?: string }> {
+  for (let attempt = 0; attempt <= retryCount; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const profile = await apiGet<AuthUser>("/auth/me", undefined, {
+        authScope: "STAFF",
+        signal: controller.signal,
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      clearTimeout(timer);
+
+      if (profile && profile.userType === "STAFF") {
+        return { success: true, data: profile };
+      } else {
+        return { success: false, isUnauthorized: true, error: "Not a staff account" };
+      }
+    } catch (err: any) {
+      clearTimeout(timer);
+
+      const is401 = err?.statusCode === 401 || err?.status === 401 || err?.message?.includes("401");
+      if (is401) {
+        return { success: false, isUnauthorized: true, error: "Session expired or unauthorized" };
+      }
+
+      const isAbort = err?.name === "AbortError" || controller.signal.aborted;
+      const errorMsg = isAbort
+        ? "Staff verification timed out (10s)"
+        : err?.message || "Network error during staff verification";
+
+      if (attempt < retryCount) {
+        await new Promise((r) => setTimeout(r, 500));
+        continue;
+      }
+
+      return { success: false, error: errorMsg };
+    }
+  }
+
+  return { success: false, error: "Staff verification failed after retry" };
+}
 
 export function StaffAuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const saved = localStorage.getItem(STAFF_USER_KEY);
-        return saved ? JSON.parse(saved) : null;
-      } catch {
-        return null;
-      }
-    }
-    return null;
-  });
-  const [isLoading, setIsLoading] = useState(true);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [authError, setAuthError] = useState<string | null>(null);
 
-  const fetchCurrentUser = useCallback(async () => {
-    try {
-      const token = getStaffToken();
-      if (!token) {
-        setUser(null);
-        if (typeof window !== "undefined") localStorage.removeItem(STAFF_USER_KEY);
-        return null;
-      }
-      const profile = await apiGet<AuthUser>("/auth/me", undefined, { authScope: "STAFF" });
-      if (profile && profile.userType === "STAFF") {
-        setUser(profile);
-        if (typeof window !== "undefined") {
-          localStorage.setItem(STAFF_USER_KEY, JSON.stringify(profile));
-        }
-        return profile;
-      } else {
-        setUser(null);
-        if (typeof window !== "undefined") localStorage.removeItem(STAFF_USER_KEY);
-        return null;
-      }
-    } catch {
+  const verifySession = useCallback(async (isManualRetry = false) => {
+    const token = getStaffToken();
+    if (!token) {
       setUser(null);
-      if (typeof window !== "undefined") localStorage.removeItem(STAFF_USER_KEY);
+      setIsLoading(false);
+      setAuthError(null);
+      inMemoryStaffCache = null;
+      setStaffUser(null);
       return null;
     }
-  }, []);
+
+    const isCacheFresh =
+      !isManualRetry &&
+      inMemoryStaffCache &&
+      inMemoryStaffCache.token === token &&
+      Date.now() - inMemoryStaffCache.verifiedAt < CACHE_TTL_MS;
+
+    if (isCacheFresh && inMemoryStaffCache) {
+      setUser(inMemoryStaffCache.user);
+      setIsLoading(false);
+      setAuthError(null);
+      return inMemoryStaffCache.user;
+    }
+
+    // Only block if we have no rendered user or on manual retry
+    if (!user || isManualRetry) {
+      setIsLoading(true);
+      setAuthError(null);
+    }
+
+    const res = await fetchStaffProfileWithTimeout(token, 10000, 1);
+
+    if (res.success && res.data) {
+      setUser(res.data);
+      setAuthError(null);
+      setIsLoading(false);
+      inMemoryStaffCache = {
+        user: res.data,
+        token,
+        verifiedAt: Date.now(),
+      };
+      setStaffUser(res.data);
+      return res.data;
+    }
+
+    if (res.isUnauthorized) {
+      inMemoryStaffCache = null;
+      setUser(null);
+      clearStaffSession();
+      setIsLoading(false);
+      setAuthError(null);
+      if (typeof window !== "undefined") {
+        window.location.href = "/admin/login";
+      }
+      return null;
+    }
+
+    // Timeout or network error
+    if (!user) {
+      setIsLoading(false);
+      setAuthError(res.error || "Staff verification timed out. Please check network connection.");
+    } else {
+      console.warn("Background staff revalidation notice:", res.error);
+      setIsLoading(false);
+    }
+
+    return null;
+  }, [user]);
 
   useEffect(() => {
     let mounted = true;
     (async () => {
       try {
         const token = getStaffToken();
-        const hasSavedStaff = typeof window !== "undefined" && !!localStorage.getItem(STAFF_USER_KEY);
-
-        if (token) {
-          const profile = await fetchCurrentUser();
-          if (!profile && hasSavedStaff) {
-            const res = await apiPost<{ accessToken: string }>("/auth/staff/refresh", undefined, { authScope: "STAFF" });
-            if (res?.accessToken) {
-              setStaffToken(res.accessToken);
-              if (mounted) await fetchCurrentUser();
+        const saved = getStaffUser();
+        if (token && saved && mounted) {
+          if (saved.userType === "STAFF") {
+            setUser(saved);
+            setIsLoading(false);
+            if (!inMemoryStaffCache) {
+              inMemoryStaffCache = {
+                user: saved,
+                token,
+                verifiedAt: Date.now(),
+              };
             }
           }
-        } else if (hasSavedStaff) {
-          const res = await apiPost<{ accessToken: string }>("/auth/staff/refresh", undefined, { authScope: "STAFF" });
-          if (res?.accessToken) {
-            setStaffToken(res.accessToken);
-            if (mounted) await fetchCurrentUser();
+        }
+
+        if (token) {
+          await verifySession(false);
+        } else {
+          if (mounted) {
+            setUser(null);
+            setIsLoading(false);
           }
         }
       } catch {
-        // Not logged in as staff
-      } finally {
         if (mounted) setIsLoading(false);
       }
     })();
 
     const cleanup = onStaffUnauthorized(() => {
+      inMemoryStaffCache = null;
       setUser(null);
-      setStaffToken(null);
-      if (typeof window !== "undefined") localStorage.removeItem(STAFF_USER_KEY);
+      clearStaffSession();
     });
 
     return () => {
       mounted = false;
       cleanup();
     };
-  }, [fetchCurrentUser]);
+  }, []);
 
   const login = async (credentials: { emailOrPhone: string; password: string; email?: string }) => {
     setIsLoading(true);
+    setAuthError(null);
     try {
       const payload = {
         email: credentials.email || credentials.emailOrPhone,
@@ -317,8 +431,19 @@ export function StaffAuthProvider({ children }: { children: React.ReactNode }) {
       const res = await apiPost<{ accessToken: string }>("/auth/staff/login", payload, { authScope: "STAFF" });
       if (res?.accessToken) {
         setStaffToken(res.accessToken);
-        const profile = await fetchCurrentUser();
-        return profile;
+        const verifyRes = await fetchStaffProfileWithTimeout(res.accessToken, 10000, 1);
+        if (verifyRes.success && verifyRes.data) {
+          setUser(verifyRes.data);
+          inMemoryStaffCache = {
+            user: verifyRes.data,
+            token: res.accessToken,
+            verifiedAt: Date.now(),
+          };
+          setStaffUser(verifyRes.data);
+          return verifyRes.data;
+        } else {
+          throw new Error(verifyRes.error || "Failed to fetch staff profile");
+        }
       }
       throw new Error("Failed to obtain staff access token");
     } finally {
@@ -332,14 +457,18 @@ export function StaffAuthProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // Ignore
     } finally {
+      inMemoryStaffCache = null;
       setUser(null);
-      setStaffToken(null);
-      if (typeof window !== "undefined") localStorage.removeItem(STAFF_USER_KEY);
+      clearStaffSession();
     }
   };
 
   const refreshUser = async () => {
-    await fetchCurrentUser();
+    await verifySession(true);
+  };
+
+  const retryVerification = async () => {
+    await verifySession(true);
   };
 
   const hasPermission = useCallback(
@@ -376,6 +505,8 @@ export function StaffAuthProvider({ children }: { children: React.ReactNode }) {
         logout,
         refreshUser,
         hasPermission,
+        authError,
+        retryVerification,
       }}
     >
       {children}
@@ -391,13 +522,11 @@ export function useStaffAuth() {
   return context;
 }
 
-// 3. UNIFIED / ADAPTIVE AUTH PROVIDER (Wraps both customer & staff)
+// 3. UNIFIED / ADAPTIVE AUTH PROVIDER (Wraps customer auth at root level)
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   return (
     <CustomerAuthProvider>
-      <StaffAuthProvider>
-        {children}
-      </StaffAuthProvider>
+      {children}
     </CustomerAuthProvider>
   );
 }

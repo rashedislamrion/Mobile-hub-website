@@ -26,6 +26,7 @@ export class PosController {
   })
   @Get('products')
   getPosProducts(
+    @CurrentUser() user: JwtPayload,
     @Query('search') search?: string,
     @Query('category') category?: string,
     @Query('branchId') branchId?: string,
@@ -33,14 +34,17 @@ export class PosController {
     @Query('inStock') inStock?: string,
     @Query('limit') limit?: number,
   ) {
-    return this.productService.posSearch({
-      search,
-      category,
-      branch: branchId || branch,
-      branchId: branchId || branch,
-      inStock,
-      limit,
-    });
+    return this.productService.posSearch(
+      {
+        search,
+        category,
+        branch: branchId || branch,
+        branchId: branchId || branch,
+        inStock,
+        limit,
+      },
+      user,
+    );
   }
 
   @RequirePermission({
@@ -64,19 +68,23 @@ export class PosController {
   })
   @Get('services')
   getPosServices(
+    @CurrentUser() user: JwtPayload,
     @Query('status') status?: any,
     @Query('branch') branch?: string,
     @Query('search') search?: string,
     @Query('page') page?: number,
     @Query('limit') limit?: number,
   ) {
-    return this.serviceJobService.findAll({
-      status,
-      branch,
-      search,
-      page,
-      limit,
-    });
+    return this.serviceJobService.findAll(
+      {
+        status,
+        branch,
+        search,
+        page,
+        limit,
+      },
+      user,
+    );
   }
 
   @RequirePermission({
@@ -84,7 +92,10 @@ export class PosController {
     action: PermissionAction.CREATE,
   })
   @Post('service-jobs')
-  createServiceJob(@Body() dto: CreateServiceJobDto) {
-    return this.serviceJobService.create(dto);
+  createServiceJob(
+    @Body() dto: CreateServiceJobDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.serviceJobService.create(dto, user);
   }
 }

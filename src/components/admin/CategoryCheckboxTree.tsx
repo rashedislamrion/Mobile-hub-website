@@ -29,35 +29,42 @@ export function CategoryCheckboxTree({
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
+  const loadTree = async () => {
+    try {
+      setLoading(true);
+      setFetchError(null);
+      // Try /categories/tree first, fallback to /products/categories
+      let data: any = null;
+      try {
+        data = await apiGet<CategoryNode[]>("/categories/tree");
+      } catch {
+        data = await apiGet<CategoryNode[]>("/products/categories");
+      }
+      if (Array.isArray(data)) {
+        setTree(data);
+        // Auto-expand all top-level parents with selected children
+        const initialExpanded = new Set<string>();
+        data.forEach((node) => {
+          if (node.children && node.children.length > 0) {
+            initialExpanded.add(node.id);
+          }
+        });
+        setExpandedIds(initialExpanded);
+      } else {
+        setFetchError("Invalid category data received");
+      }
+    } catch (err: any) {
+      console.error("Failed to load category tree:", err);
+      setFetchError(err.message || "Failed to load category tree");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    (async () => {
-      try {
-        setLoading(true);
-        // Try /categories/tree first, fallback to /products/categories
-        let data: any = null;
-        try {
-          data = await apiGet<CategoryNode[]>("/categories/tree");
-        } catch {
-          data = await apiGet<CategoryNode[]>("/products/categories");
-        }
-        if (Array.isArray(data)) {
-          setTree(data);
-          // Auto-expand all top-level parents with selected children
-          const initialExpanded = new Set<string>();
-          data.forEach((node) => {
-            if (node.children && node.children.length > 0) {
-              initialExpanded.add(node.id);
-            }
-          });
-          setExpandedIds(initialExpanded);
-        }
-      } catch (err) {
-        console.error("Failed to load category tree:", err);
-      } finally {
-        setLoading(false);
-      }
-    })();
+    loadTree();
   }, []);
 
   const toggleExpand = (id: string, e: React.MouseEvent) => {
@@ -195,6 +202,18 @@ export function CategoryCheckboxTree({
         {loading ? (
           <div className="p-4 text-center text-xs text-slate-400">
             Loading categories tree...
+          </div>
+        ) : fetchError ? (
+          <div className="p-4 text-center text-xs text-rose-500 space-y-2 bg-rose-50/50 rounded-lg border border-rose-100 my-1">
+            <p className="font-medium">Failed to load category tree</p>
+            <p className="text-[11px] text-rose-400">{fetchError}</p>
+            <button
+              type="button"
+              onClick={loadTree}
+              className="inline-block px-3 py-1 bg-white border border-rose-200 text-rose-700 rounded text-xs font-semibold hover:bg-rose-50"
+            >
+              Retry
+            </button>
           </div>
         ) : filtered.length === 0 ? (
           <div className="p-4 text-center text-xs text-slate-400">

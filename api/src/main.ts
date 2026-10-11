@@ -6,6 +6,7 @@ import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { join } from 'path';
+import * as fs from 'fs';
 import { PrismaClientExceptionFilter } from './common/filters/prisma-client-exception.filter';
 
 async function bootstrap() {
@@ -32,6 +33,30 @@ async function bootstrap() {
   validateJwtSecret('JWT_ACCESS_SECRET', jwtAccessSecret);
   validateJwtSecret('JWT_REFRESH_SECRET', jwtRefreshSecret);
 
+  // B1.4: Startup verification of upload directories
+  const uploadDir = process.env.UPLOAD_ROOT || join(process.cwd(), 'uploads');
+  const privateUploadDir =
+    process.env.PRIVATE_UPLOAD_ROOT || join(process.cwd(), 'private-uploads');
+
+  for (const [name, dir] of [
+    ['UPLOAD_ROOT', uploadDir],
+    ['PRIVATE_UPLOAD_ROOT', privateUploadDir],
+  ] as const) {
+    try {
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.accessSync(dir, fs.constants.W_OK);
+    } catch (err: any) {
+      const msg = `[FATAL] ${name} directory "${dir}" is not writable or cannot be created: ${err.message}`;
+      if (isProduction) {
+        throw new Error(msg);
+      } else {
+        console.error(msg);
+      }
+    }
+  }
+
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
   // Enable graceful shutdown
@@ -50,7 +75,35 @@ async function bootstrap() {
   app.use(compression());
   app.use(cookieParser());
 
-  const uploadDir = process.env.UPLOAD_ROOT || join(process.cwd(), 'uploads');
+  // B1: Express middleware to block public access to sensitive folders
+  app.use('/uploads', (req, res, next) => {
+    const blockedFolders = [
+      '/staff-documents',
+      '/purchase-documents',
+      '/expenses',
+    ];
+    const path = req.path.toLowerCase();
+    if (blockedFolders.some((f) => path.startsWith(f))) {
+      return res.status(403).json({
+        statusCode: 403,
+        message:
+          'Access forbidden: confidential documents cannot be accessed via public static URLs.',
+        error: 'Forbidden',
+      });
+    }
+
+    // B3.3: Protect legacy SVG files with sandbox CSP and attachment headers
+    if (path.endsWith('.svg')) {
+      res.setHeader(
+        'Content-Security-Policy',
+        "default-src 'none'; sandbox;",
+      );
+      res.setHeader('Content-Disposition', 'attachment');
+    }
+
+    next();
+  });
+
   app.useStaticAssets(uploadDir, { prefix: '/uploads/' });
 
   // Parse comma-separated ALLOWED_ORIGINS from environment variable

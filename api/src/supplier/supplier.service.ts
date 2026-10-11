@@ -11,6 +11,7 @@ import {
   CreateSupplierPaymentDto,
 } from './dto/supplier.dto';
 import { Prisma, StaffStatus, WalletTxnType } from '@prisma/client';
+import { storageService } from '../common/upload/storage.service';
 
 @Injectable()
 export class SupplierService {
@@ -168,16 +169,36 @@ export class SupplierService {
   async removeSupplier(id: string) {
     const supplier = await this.findOneSupplier(id);
 
+    const blockers: string[] = [];
+    const blockerCounts: Record<string, any> = {};
+
     if (Number(supplier.totalDue) > 0) {
-      throw new ConflictException(
-        `Cannot delete supplier "${supplier.name}" because there is an outstanding due amount of ৳${Number(supplier.totalDue).toLocaleString()}.`,
-      );
+      blockers.push(`outstanding due amount of ৳${Number(supplier.totalDue).toLocaleString()}`);
+      blockerCounts.totalDue = Number(supplier.totalDue);
     }
 
     if (supplier._count.purchaseOrders > 0) {
-      throw new ConflictException(
-        `Cannot delete supplier "${supplier.name}" because they have historical purchase orders. Please mark them as Inactive instead.`,
-      );
+      blockers.push(`${supplier._count.purchaseOrders} purchase order(s)`);
+      blockerCounts.purchaseOrders = supplier._count.purchaseOrders;
+    }
+
+    if (supplier._count.payments > 0) {
+      blockers.push(`${supplier._count.payments} payment record(s)`);
+      blockerCounts.payments = supplier._count.payments;
+    }
+
+    if (blockers.length > 0) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        message: `Cannot delete supplier "${supplier.name}". Blocker details: ${blockers.join(', ')}. Please mark them as INACTIVE instead.`,
+        canDeactivate: true,
+        blockers: blockerCounts,
+      });
+    }
+
+    if (supplier.logo) {
+      await storageService.safeUnlink(supplier.logo);
     }
 
     return this.prisma.supplier.delete({ where: { id } });

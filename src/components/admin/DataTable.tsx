@@ -160,7 +160,13 @@ export function DataTable<TData, TValue>({
       {!isLoading && table.getRowModel().rows?.length > 0 && (
         <div className="border-t border-slate-100 bg-white p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="text-sm text-slate-500">
-            Showing <span className="font-medium text-slate-800">{table.getState().pagination.pageIndex * table.getState().pagination.pageSize + 1}</span> to <span className="font-medium text-slate-800">{Math.min((table.getState().pagination.pageIndex + 1) * table.getState().pagination.pageSize, data.length)}</span> of <span className="font-medium text-slate-800">{data.length}</span> results
+            {data.length === 0 ? (
+              "Showing 0 results"
+            ) : (
+              <>
+                Showing <span className="font-medium text-slate-800">{table.getState().pagination.pageIndex * table.getState().pagination.pageSize + 1}</span> to <span className="font-medium text-slate-800">{Math.min((table.getState().pagination.pageIndex + 1) * table.getState().pagination.pageSize, data.length)}</span> of <span className="font-medium text-slate-800">{data.length}</span> results
+              </>
+            )}
           </div>
           <Pagination className="justify-end sm:justify-end">
             <PaginationContent>

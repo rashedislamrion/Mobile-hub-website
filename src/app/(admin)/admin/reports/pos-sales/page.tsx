@@ -419,8 +419,9 @@ export default function PosSalesReportPage() {
         {/* Pagination Footer */}
         <div className="p-4 border-t border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-muted-foreground">
           <div>
-            Showing <span className="font-semibold text-foreground">{paginatedData.length}</span> of{" "}
-            <span className="font-semibold text-foreground">{data.length}</span> records
+            {data.length === 0
+              ? "Showing 0 records"
+              : `Showing ${(currentPage - 1) * pageSize + 1} to ${Math.min(currentPage * pageSize, data.length)} of ${data.length.toLocaleString()} records`}
           </div>
           <div className="flex items-center gap-2">
             <button

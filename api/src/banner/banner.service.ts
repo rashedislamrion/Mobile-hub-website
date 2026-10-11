@@ -6,6 +6,7 @@ import {
   ReorderBannersDto,
 } from './dto/banner.dto';
 import { Prisma, StaffStatus } from '@prisma/client';
+import { storageService } from '../common/upload/storage.service';
 
 @Injectable()
 export class BannerService {
@@ -48,7 +49,7 @@ export class BannerService {
   async create(dto: CreateBannerDto) {
     return this.prisma.banner.create({
       data: {
-        imageUrl: dto.imageUrl,
+        imageUrl: dto.imageUrl!,
         title: dto.title || null,
         linkUrl: dto.linkUrl || '#',
         sortOrder: dto.sortOrder !== undefined ? dto.sortOrder : 0,
@@ -97,7 +98,10 @@ export class BannerService {
   }
 
   async remove(id: string) {
-    await this.findOne(id);
+    const banner = await this.findOne(id);
+    if (banner.imageUrl) {
+      await storageService.safeUnlink(banner.imageUrl);
+    }
     return this.prisma.banner.delete({ where: { id } });
   }
 }

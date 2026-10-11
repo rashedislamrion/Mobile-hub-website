@@ -33,6 +33,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { AdminTableState } from "@/components/admin/AdminTableState";
 
 export interface AdminProductItem {
   id: string;
@@ -62,6 +63,7 @@ export default function AllProductsPage() {
   const [categories, setCategories] = useState<Array<{ id: string; name: string }>>([]);
   const [brands, setBrands] = useState<Array<{ id: string; name: string }>>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   // Pagination State
   const [page, setPage] = useState(1);
@@ -103,6 +105,7 @@ export default function AllProductsPage() {
 
   const fetchProducts = useCallback(async () => {
     setIsLoading(true);
+    setError(null);
     try {
       const params: Record<string, any> = {
         page,
@@ -134,6 +137,7 @@ export default function AllProductsPage() {
         });
       }
     } catch (err: any) {
+      setError(err.message || "Failed to load products");
       toast.error(err.message || "Failed to load products");
     } finally {
       setIsLoading(false);
@@ -201,6 +205,7 @@ export default function AllProductsPage() {
       await apiPatch(`/products/${product.id}/toggle`, {
         [flagKey]: nextVal,
       });
+      fetch("/api/revalidate?path=/").catch(() => {});
       toast.success(
         `Updated ${product.name}: ${flagKey} set to ${nextVal ? "ON" : "OFF"}`
       );
@@ -235,6 +240,7 @@ export default function AllProductsPage() {
 
     try {
       await apiDelete(`/products/${product.id}`);
+      fetch("/api/revalidate?path=/").catch(() => {});
       toast.success(`Product "${product.name}" deleted successfully.`);
       fetchProducts();
     } catch (e: any) {
@@ -500,23 +506,19 @@ export default function AllProductsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-normal">
-              {isLoading ? (
-                <tr>
-                  <td colSpan={9} className="py-16 text-center text-slate-400">
-                    <Layers className="w-7 h-7 animate-pulse mx-auto mb-2 text-emerald-500" />
-                    <p className="text-xs">Loading products from database...</p>
-                  </td>
-                </tr>
-              ) : products.length === 0 ? (
-                <tr>
-                  <td colSpan={9} className="py-16 text-center text-slate-400">
-                    <Package className="w-8 h-8 mx-auto mb-2 opacity-40" />
-                    <p className="text-xs font-semibold text-slate-600">No products found</p>
-                    <p className="text-[11px] text-slate-400 mt-0.5">Try clearing your filters or creating a new product.</p>
-                  </td>
-                </tr>
-              ) : (
-                products.map((product) => {
+              <AdminTableState
+                isLoading={isLoading}
+                error={error}
+                isEmpty={products.length === 0}
+                onRetry={fetchProducts}
+                colSpan={9}
+                loadingRows={6}
+                emptyTitle="No records found"
+                emptyDescription="Try clearing your filters or creating a new product."
+                emptyActionLabel="Clear Filters"
+                onEmptyAction={handleResetFilters}
+              >
+                {products.map((product) => {
                   const isChecked = selectedIds.includes(product.id);
                   const imgUrl = product.images?.[0]?.url
                     ? getImageUrl(product.images[0].url)
@@ -666,8 +668,8 @@ export default function AllProductsPage() {
                       </td>
                     </tr>
                   );
-                })
-              )}
+                })}
+              </AdminTableState>
             </tbody>
           </table>
         </div>
@@ -675,19 +677,25 @@ export default function AllProductsPage() {
         {/* Footer Pagination */}
         <div className="p-3.5 border-t border-slate-200 bg-slate-50/60 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-600">
           <div>
-            Showing{" "}
-            <span className="font-semibold text-slate-800">
-              {meta.total === 0 ? 0 : (page - 1) * limit + 1}
-            </span>{" "}
-            to{" "}
-            <span className="font-semibold text-slate-800">
-              {Math.min(page * limit, meta.total)}
-            </span>{" "}
-            of{" "}
-            <span className="font-semibold text-slate-800">
-              {meta.total.toLocaleString()}
-            </span>{" "}
-            results
+            {meta.total === 0 ? (
+              "Showing 0 results"
+            ) : (
+              <>
+                Showing{" "}
+                <span className="font-semibold text-slate-800">
+                  {(page - 1) * limit + 1}
+                </span>{" "}
+                to{" "}
+                <span className="font-semibold text-slate-800">
+                  {Math.min(page * limit, meta.total)}
+                </span>{" "}
+                of{" "}
+                <span className="font-semibold text-slate-800">
+                  {meta.total.toLocaleString()}
+                </span>{" "}
+                results
+              </>
+            )}
           </div>
 
           <div className="flex items-center gap-1">

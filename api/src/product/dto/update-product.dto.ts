@@ -5,6 +5,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Min,
   ValidateNested,
 } from 'class-validator';
 import { Type, Transform, plainToInstance } from 'class-transformer';
@@ -12,6 +13,7 @@ import { ProductStatus } from '@prisma/client';
 import {
   ProductVariantDto,
   ProductSpecificationDto,
+  transformStringArray,
 } from './create-product.dto';
 
 export class UpdateProductDto {
@@ -75,30 +77,39 @@ export class UpdateProductDto {
     value !== undefined && value !== '' ? Number(value) : undefined,
   )
   @IsNumber()
+  @Min(0)
   @IsOptional()
   regularPrice?: number;
 
   @Transform(({ value }) =>
     value !== undefined ? (value === '' ? null : Number(value)) : undefined,
   )
+  @IsNumber()
+  @Min(0)
   @IsOptional()
   salePrice?: number | null;
 
   @Transform(({ value }) =>
     value !== undefined ? (value === '' ? null : Number(value)) : undefined,
   )
+  @IsNumber()
+  @Min(0)
   @IsOptional()
   costPrice?: number | null;
 
   @Transform(({ value }) =>
     value !== undefined ? (value === '' ? null : Number(value)) : undefined,
   )
+  @IsNumber()
+  @Min(0)
   @IsOptional()
   buyingPrice?: number | null;
 
   @Transform(({ value }) =>
     value !== undefined ? (value === '' ? null : Number(value)) : undefined,
   )
+  @IsNumber()
+  @Min(0)
   @IsOptional()
   wholesalePrice?: number | null;
 
@@ -106,6 +117,7 @@ export class UpdateProductDto {
     value !== undefined && value !== '' ? Number(value) : undefined,
   )
   @IsNumber()
+  @Min(1)
   @IsOptional()
   minOrderQty?: number;
 
@@ -125,20 +137,17 @@ export class UpdateProductDto {
   @IsOptional()
   ogImageUrl?: string;
 
-  @Transform(({ value }) => {
-    if (typeof value === 'string') {
-      try {
-        return JSON.parse(value);
-      } catch {
-        return [value];
-      }
-    }
-    return value;
-  })
+  @Transform(transformStringArray)
   @IsArray()
   @IsString({ each: true })
   @IsOptional()
   categoryIds?: string[];
+
+  @Transform(transformStringArray)
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  tags?: string[];
 
   @IsString()
   @IsOptional()
@@ -161,6 +170,9 @@ export class UpdateProductDto {
   metaKeywords?: string;
 
   @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') {
+      return [];
+    }
     let parsed = value;
     if (typeof value === 'string') {
       try {
@@ -181,6 +193,9 @@ export class UpdateProductDto {
   variants?: ProductVariantDto[];
 
   @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') {
+      return [];
+    }
     let parsed = value;
     if (typeof value === 'string') {
       try {
@@ -202,18 +217,15 @@ export class UpdateProductDto {
   @IsOptional()
   specifications?: ProductSpecificationDto[];
 
-  @Transform(({ value }) => {
-    if (typeof value === 'string') {
-      try {
-        return JSON.parse(value);
-      } catch {
-        return [value];
-      }
-    }
-    return value;
-  })
+  @Transform(transformStringArray)
   @IsArray()
   @IsString({ each: true })
   @IsOptional()
   removedImageIds?: string[];
+
+  @Transform(transformStringArray)
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  imagesToKeep?: string[];
 }

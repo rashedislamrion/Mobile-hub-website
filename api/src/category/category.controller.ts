@@ -22,7 +22,7 @@ import { RequirePermission } from '../auth/decorators/require-permission.decorat
 import { ModuleName, PermissionAction } from '@prisma/client';
 import { createMulterConfig } from '../common/upload/multer.config';
 
-@Controller('categories')
+@Controller(['categories', 'category'])
 export class CategoryController {
   constructor(private readonly categoryService: CategoryService) {}
 

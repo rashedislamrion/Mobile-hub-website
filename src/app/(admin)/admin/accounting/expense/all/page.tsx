@@ -6,7 +6,8 @@ import { DataTable, StatusBadge, ActionDropdown } from "@/components/admin/DataT
 import { FilterBar } from "@/components/admin/FilterBar";
 import { FilterConfig, StatusVariant, TableAction } from "@/types/table";
 import { ColumnDef } from "@tanstack/react-table";
-import { Plus, CheckCircle, Trash2, Receipt } from "lucide-react";
+import { Plus, CheckCircle, Trash2, Receipt, FileText, AlertCircle, RefreshCw } from "lucide-react";
+import { downloadPrivateAsset } from "@/lib/private-asset";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -16,6 +17,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/lib/api-client";
 
 interface ExpenseItem {
@@ -65,25 +67,39 @@ export default function AllExpensesPage() {
     setDateFilter(""); 
   }, [setTitle, setBadge, setDateFilter]);
 
-  useEffect(() => {
-    Promise.all([
-      apiGet<any[]>("/expense-categories"),
-      apiGet<any[]>("/branches/public"),
-      apiGet<any[]>("/wallet-types"),
-    ])
-      .then(([catRes, branchRes, walletRes]) => {
-        if (Array.isArray(catRes)) setCategories(catRes);
-        if (Array.isArray(branchRes)) setBranches(branchRes);
-        if (Array.isArray(walletRes)) {
-          setWallets(walletRes);
-          if (walletRes.length > 0) {
-            setFormData((prev) => ({ ...prev, walletTypeId: walletRes[0].id }));
-            setPayWalletId(walletRes[0].id);
-          }
+  const [optionsErrors, setOptionsErrors] = useState<string | null>(null);
+  const [isLoadingOptions, setIsLoadingOptions] = useState(false);
+
+  const loadOptions = useCallback(async () => {
+    try {
+      setIsLoadingOptions(true);
+      setOptionsErrors(null);
+      const [catRes, branchRes, walletRes] = await Promise.all([
+        apiGet<any[]>("/expense-categories"),
+        apiGet<any[]>("/branches/public"),
+        apiGet<any[]>("/wallet-types"),
+      ]);
+      if (Array.isArray(catRes)) setCategories(catRes);
+      if (Array.isArray(branchRes)) setBranches(branchRes);
+      if (Array.isArray(walletRes)) {
+        setWallets(walletRes);
+        if (walletRes.length > 0) {
+          setFormData((prev) => ({ ...prev, walletTypeId: walletRes[0].id }));
+          setPayWalletId(walletRes[0].id);
         }
-      })
-      .catch(() => {});
+      }
+    } catch (err: any) {
+      console.error("Failed to load expense options:", err);
+      setOptionsErrors("Failed to load expense categories, branches or wallets. Please retry.");
+      toast.error("Failed to load expense options.");
+    } finally {
+      setIsLoadingOptions(false);
+    }
   }, []);
+
+  useEffect(() => {
+    loadOptions();
+  }, [loadOptions]);
 
   const loadData = useCallback(async () => {
     try {
@@ -128,10 +144,10 @@ export default function AllExpensesPage() {
       toast.success("Expense recorded successfully");
       setDialogOpen(false);
       setFormData({
-        categoryId: categories[0]?.id || "",
+        categoryId: "",
         branchId: "",
         amount: 0,
-        walletTypeId: wallets[0]?.id || "",
+        walletTypeId: "",
         description: "",
         status: "PAID",
         date: new Date().toISOString().split("T")[0],
@@ -191,6 +207,20 @@ export default function AllExpensesPage() {
   ], [categories, branches]);
 
   const createActions = (): TableAction[] => [
+    {
+      label: "Download Attachment",
+      icon: <FileText className="w-4 h-4 text-slate-600" />,
+      onClick: (row) => {
+        if (!row.attachment) {
+          toast.info("No attachment file uploaded for this expense.");
+          return;
+        }
+        downloadPrivateAsset(
+          `/expenses/${row.id}/attachment`,
+          `${row.referenceNo}_attachment`,
+        );
+      },
+    },
     {
       label: "Mark as Paid",
       icon: <CheckCircle className="w-4 h-4 text-emerald-600" />,
@@ -306,6 +336,23 @@ export default function AllExpensesPage() {
         </button>
       </div>
 
+      {optionsErrors && (
+        <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 flex items-center justify-between text-rose-800 text-xs">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+            <span>{optionsErrors}</span>
+          </div>
+          <button
+            type="button"
+            onClick={loadOptions}
+            disabled={isLoadingOptions}
+            className="flex items-center gap-1 px-3 py-1 bg-white border border-rose-200 text-rose-700 rounded-md font-medium hover:bg-rose-50 transition-colors"
+          >
+            <RefreshCw className={`w-3 h-3 ${isLoadingOptions ? "animate-spin" : ""}`} /> Retry
+          </button>
+        </div>
+      )}
+
       <FilterBar 
         searchPlaceholder="Search by reference, description..."
         filters={filterConfigs}
@@ -342,16 +389,16 @@ export default function AllExpensesPage() {
 
               <div>
                 <label className="text-xs font-semibold text-slate-700 block mb-1.5">Category *</label>
-                <select
+                <SearchableSelect
+                  options={categories.map((c) => ({
+                    value: c.id,
+                    label: c.name,
+                  }))}
                   value={formData.categoryId}
-                  onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })}
-                  className="w-full h-10 px-3 rounded-lg border border-slate-200 bg-white text-sm"
-                >
-                  <option value="">Select Category</option>
-                  {categories.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
+                  onChange={(val) => setFormData({ ...formData, categoryId: val })}
+                  placeholder="Select Category..."
+                  required
+                />
               </div>
             </div>
 
@@ -368,16 +415,15 @@ export default function AllExpensesPage() {
 
               <div>
                 <label className="text-xs font-semibold text-slate-700 block mb-1.5">Branch</label>
-                <select
+                <SearchableSelect
+                  options={[
+                    { value: "", label: "Global / Headquarters" },
+                    ...branches.map((b) => ({ value: b.id, label: b.name })),
+                  ]}
                   value={formData.branchId}
-                  onChange={(e) => setFormData({ ...formData, branchId: e.target.value })}
-                  className="w-full h-10 px-3 rounded-lg border border-slate-200 bg-white text-sm"
-                >
-                  <option value="">Global / Headquarters</option>
-                  {branches.map((b) => (
-                    <option key={b.id} value={b.id}>{b.name}</option>
-                  ))}
-                </select>
+                  onChange={(val) => setFormData({ ...formData, branchId: val })}
+                  placeholder="Select Branch..."
+                />
               </div>
             </div>
 
@@ -411,17 +457,17 @@ export default function AllExpensesPage() {
               {formData.status === "PAID" && (
                 <div>
                   <label className="text-xs font-semibold text-slate-700 block mb-1.5">Disburse From Wallet *</label>
-                  <select
+                  <SearchableSelect
+                    options={wallets.map((w) => ({
+                      value: w.id,
+                      label: w.name,
+                      secondary: `Balance: ৳${Number(w.currentBalance).toLocaleString()}`,
+                    }))}
                     value={formData.walletTypeId}
-                    onChange={(e) => setFormData({ ...formData, walletTypeId: e.target.value })}
-                    className="w-full h-10 px-3 rounded-lg border border-slate-200 bg-white text-sm"
-                  >
-                    {wallets.map((w) => (
-                      <option key={w.id} value={w.id}>
-                        {w.name} (Balance: ৳{Number(w.currentBalance).toLocaleString()})
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(val) => setFormData({ ...formData, walletTypeId: val })}
+                    placeholder="Select Wallet..."
+                    required
+                  />
                 </div>
               )}
             </div>
@@ -468,17 +514,17 @@ export default function AllExpensesPage() {
 
             <div>
               <label className="text-xs font-semibold text-slate-700 block mb-1.5">Disburse From Wallet</label>
-              <select
+              <SearchableSelect
+                options={wallets.map((w) => ({
+                  value: w.id,
+                  label: w.name,
+                  secondary: `Balance: ৳${Number(w.currentBalance).toLocaleString()}`,
+                }))}
                 value={payWalletId}
-                onChange={(e) => setPayWalletId(e.target.value)}
-                className="w-full h-10 px-3 rounded-lg border border-slate-200 bg-white text-sm"
-              >
-                {wallets.map((w) => (
-                  <option key={w.id} value={w.id}>
-                    {w.name} (Balance: ৳{Number(w.currentBalance).toLocaleString()})
-                  </option>
-                ))}
-              </select>
+                onChange={(val) => setPayWalletId(val)}
+                placeholder="Select Wallet..."
+                required
+              />
             </div>
 
             <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">

@@ -29,6 +29,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { apiGet, apiPatch, apiDelete } from "@/lib/api-client";
+import { downloadPrivateAsset, PrivateImage } from "@/lib/private-asset";
 import {
   Dialog,
   DialogContent,
@@ -38,6 +39,7 @@ import {
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { AdminTableState } from "@/components/admin/AdminTableState";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -89,6 +91,7 @@ export default function EmployeesPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   // Filters
   const [searchTerm, setSearchTerm] = useState("");
@@ -132,6 +135,7 @@ export default function EmployeesPage() {
   const loadData = useCallback(async () => {
     try {
       setIsLoading(true);
+      setError(null);
       const params: Record<string, any> = {
         page: currentPage,
         limit: 15,
@@ -150,6 +154,7 @@ export default function EmployeesPage() {
       setTotalCount(res?.meta?.total || (res?.data || []).length);
       setTotalPages(res?.meta?.totalPages || 1);
     } catch (err: any) {
+      setError(err.message || "Failed to load employees");
       toast.error(err.message || "Failed to load employees");
     } finally {
       setIsLoading(false);
@@ -403,23 +408,19 @@ export default function EmployeesPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border text-foreground">
-              {isLoading ? (
-                <tr>
-                  <td colSpan={7} className="p-8 text-center text-muted-foreground">
-                    <div className="flex items-center justify-center gap-2">
-                      <div className="h-5 w-5 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin" />
-                      <span>Loading team members...</span>
-                    </div>
-                  </td>
-                </tr>
-              ) : data.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="p-8 text-center text-muted-foreground">
-                    No employees found matching the current search & filters.
-                  </td>
-                </tr>
-              ) : (
-                data.map((emp) => {
+              <AdminTableState
+                isLoading={isLoading}
+                error={error}
+                isEmpty={data.length === 0}
+                onRetry={loadData}
+                colSpan={7}
+                loadingRows={5}
+                emptyTitle="No records found"
+                emptyDescription="No employees found matching the current search & filters."
+                emptyActionLabel="Add Employee"
+                onEmptyAction={() => router.push("/admin/hrm/employees/create")}
+              >
+                {data.map((emp) => {
                   const isSelected = selectedIds.includes(emp.id);
                   const accessLabel = emp.access || (emp.role?.scope === "GLOBAL" ? "Admin" : "Branch Only");
                   const isAdmin = accessLabel === "Admin";
@@ -445,10 +446,18 @@ export default function EmployeesPage() {
                         <div className="flex items-center gap-3">
                           <div className="relative h-10 w-10 rounded-full bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 font-bold flex items-center justify-center shrink-0 overflow-hidden text-sm border border-border">
                             {emp.photo ? (
-                              <img
-                                src={emp.photo}
+                              <PrivateImage
+                                endpointOrPath={`/employees/${emp.id}/document/photo`}
                                 alt={emp.name}
                                 className="h-full w-full object-cover"
+                                fallback={
+                                  emp.name
+                                    .split(" ")
+                                    .map((n) => n[0])
+                                    .slice(0, 2)
+                                    .join("")
+                                    .toUpperCase()
+                                }
                               />
                             ) : (
                               emp.name
@@ -598,8 +607,8 @@ export default function EmployeesPage() {
                       </td>
                     </tr>
                   );
-                })
-              )}
+                })}
+              </AdminTableState>
             </tbody>
           </table>
         </div>
@@ -607,8 +616,9 @@ export default function EmployeesPage() {
         {/* Pagination Bar */}
         <div className="p-4 border-t border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-muted-foreground">
           <div>
-            Showing <span className="font-semibold text-foreground">{data.length}</span> of{" "}
-            <span className="font-semibold text-foreground">{totalCount}</span> team members
+            {totalCount === 0
+              ? "Showing 0 team members"
+              : `Showing ${(currentPage - 1) * 15 + 1} to ${Math.min(currentPage * 15, totalCount)} of ${totalCount.toLocaleString()} team members`}
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -655,10 +665,18 @@ export default function EmployeesPage() {
               <div className="flex items-start gap-4 p-4 rounded-xl bg-muted/30 border border-border">
                 <div className="h-14 w-14 rounded-full bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 font-bold flex items-center justify-center shrink-0 overflow-hidden text-lg border border-border">
                   {detailsModalEmployee.photo ? (
-                    <img
-                      src={detailsModalEmployee.photo}
+                    <PrivateImage
+                      endpointOrPath={`/employees/${detailsModalEmployee.id}/document/photo`}
                       alt={detailsModalEmployee.name}
                       className="h-full w-full object-cover"
+                      fallback={
+                        detailsModalEmployee.name
+                          .split(" ")
+                          .map((n) => n[0])
+                          .slice(0, 2)
+                          .join("")
+                          .toUpperCase()
+                      }
                     />
                   ) : (
                     detailsModalEmployee.name
@@ -790,14 +808,18 @@ export default function EmployeesPage() {
                     <ExternalLink className="h-4 w-4 text-emerald-600" />
                     <span>Birth Certificate / ID Document attached</span>
                   </div>
-                  <a
-                    href={detailsModalEmployee.birthCertificateUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="font-medium text-emerald-600 hover:underline"
+                  <button
+                    type="button"
+                    onClick={() =>
+                      downloadPrivateAsset(
+                        `/employees/${detailsModalEmployee.id}/document/birthCertificate`,
+                        `${detailsModalEmployee.name.replace(/\s+/g, "_")}_birth_certificate`,
+                      )
+                    }
+                    className="font-medium text-emerald-600 hover:underline cursor-pointer"
                   >
-                    View Document
-                  </a>
+                    Download Document
+                  </button>
                 </div>
               )}
             </div>

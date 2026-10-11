@@ -28,6 +28,8 @@ import {
 import { useAdminPage } from "@/contexts/AdminPageContext";
 import { useStaffAuth } from "@/context/AuthContext";
 import { apiGet, apiPost } from "@/lib/api-client";
+import { SearchableSelect } from "@/components/ui/searchable-select";
+import { PartTypeaheadInput } from "@/components/admin/PartTypeaheadInput";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -107,7 +109,7 @@ const AVAILABLE_PAYMENT_METHODS = [
 
 export default function CreateServicingJobPage() {
   const router = useRouter();
-  const { setTitle, setBadge } = useAdminPage();
+  const { setTitle, setBadge, selectedBranchId } = useAdminPage();
   const { user } = useStaffAuth();
 
   // Lookups & Options State
@@ -178,59 +180,91 @@ export default function CreateServicingJobPage() {
     setBadge("Repair Intake");
   }, [setTitle, setBadge]);
 
-  // Fetch initial lookups
-  useEffect(() => {
-    // Device Types
-    apiGet<LookupItem[]>("/service-lookups/device-types")
-      .then((res) => setDeviceTypes(Array.isArray(res) ? res : []))
-      .catch(() => {});
+  // Master lookup error and retry state
+  const [lookupErrors, setLookupErrors] = useState<string[]>([]);
+  const [isLoadingLookups, setIsLoadingLookups] = useState(false);
 
-    // Problem Types
-    apiGet<LookupItem[]>("/service-lookups/problem-types")
-      .then((res) => setProblemTypes(Array.isArray(res) ? res : []))
-      .catch(() => {});
+  const loadServiceData = useCallback(async () => {
+    try {
+      setIsLoadingLookups(true);
+      setLookupErrors([]);
+      const errs: string[] = [];
 
-    // Warranty Periods
-    apiGet<LookupItem[]>("/service-lookups/warranty-periods")
-      .then((res) => setWarrantyPeriods(Array.isArray(res) ? res : []))
-      .catch(() => {});
+      const results = await Promise.allSettled([
+        apiGet<LookupItem[]>("/service-lookups/device-types"),
+        apiGet<LookupItem[]>("/service-lookups/problem-types"),
+        apiGet<LookupItem[]>("/service-lookups/warranty-periods"),
+        apiGet<BrandItem[]>("/brands"),
+        apiGet<any>("/suppliers"),
+        apiGet<any>("/employees/technicians"),
+        apiGet<any>("/products?limit=100"),
+      ]);
 
-    // Brands
-    apiGet<BrandItem[]>("/brands")
-      .then((res) => setBrands(Array.isArray(res) ? res : []))
-      .catch(() => {});
+      const [dtRes, ptRes, wpRes, brRes, supRes, techRes, prodRes] = results;
 
-    // Suppliers
-    apiGet<any>("/suppliers")
-      .then((res) => {
-        const list = Array.isArray(res) ? res : res?.data || [];
+      if (dtRes.status === "fulfilled" && Array.isArray(dtRes.value)) {
+        setDeviceTypes(dtRes.value);
+      } else {
+        errs.push("Device Types");
+      }
+
+      if (ptRes.status === "fulfilled" && Array.isArray(ptRes.value)) {
+        setProblemTypes(ptRes.value);
+      } else {
+        errs.push("Problem Types");
+      }
+
+      if (wpRes.status === "fulfilled" && Array.isArray(wpRes.value)) {
+        setWarrantyPeriods(wpRes.value);
+      } else {
+        errs.push("Warranty Periods");
+      }
+
+      if (brRes.status === "fulfilled" && Array.isArray(brRes.value)) {
+        setBrands(brRes.value);
+      } else {
+        errs.push("Brands");
+      }
+
+      if (supRes.status === "fulfilled") {
+        const list = Array.isArray(supRes.value) ? supRes.value : supRes.value?.data || [];
         setSuppliers(list);
-      })
-      .catch(() => {});
+      } else {
+        errs.push("Suppliers");
+      }
 
-    // Technicians
-    apiGet<any>("/employees/technicians")
-      .then((res) => {
-        const list = Array.isArray(res) ? res : res?.data || [];
+      if (techRes.status === "fulfilled") {
+        const list = Array.isArray(techRes.value) ? techRes.value : techRes.value?.data || [];
         setTechnicians(list);
         if (user && list.some((t: any) => t.id === user.id)) {
           setSelectedTechnicianId(user.id);
         } else if (list.length > 0 && !selectedTechnicianId) {
           setSelectedTechnicianId(list[0].id);
         }
-      })
-      .catch(() => {});
+      } else {
+        errs.push("Technicians");
+      }
 
-    // Catalog Products (spare parts / products)
-    apiGet<any>("/products?limit=100")
-      .then((res) => {
-        const list = Array.isArray(res) ? res : res?.data || [];
+      if (prodRes.status === "fulfilled") {
+        const list = Array.isArray(prodRes.value) ? prodRes.value : prodRes.value?.data || [];
         setCatalogProducts(list);
-      })
-      .catch(() => {});
+      } else {
+        errs.push("Spare Parts/Products");
+      }
 
-    // Auto-fetch Next Invoice Number
-    fetchNextInvoice();
+      if (errs.length > 0) {
+        setLookupErrors(errs);
+        toast.error(`Failed to load ${errs.join(", ")}. Please click Retry.`);
+      }
+
+      fetchNextInvoice();
+    } finally {
+      setIsLoadingLookups(false);
+    }
+  }, [user, selectedTechnicianId]);
+
+  useEffect(() => {
+    loadServiceData();
   }, []);
 
   const fetchNextInvoice = async () => {
@@ -587,7 +621,7 @@ export default function CreateServicingJobPage() {
         <div>
           <div className="flex items-center gap-2 mb-1">
             <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/30 text-emerald-200 border border-emerald-400/30">
-              iFixFast Servicing Workflow
+              Mobile Hub BD Servicing Workflow
             </span>
             <span className="text-xs text-emerald-200/80">IMEI-Free Repair Intake</span>
           </div>
@@ -615,6 +649,30 @@ export default function CreateServicingJobPage() {
           </Button>
         </div>
       </div>
+
+      {lookupErrors.length > 0 && (
+        <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-rose-900 shadow-sm">
+          <div className="flex items-center gap-3">
+            <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
+            <div>
+              <p className="font-semibold text-sm">Failed to load servicing lookup options</p>
+              <p className="text-xs text-rose-600">
+                Could not fetch: <span className="font-medium">{lookupErrors.join(", ")}</span>. Dropdowns or spare parts may be missing.
+              </p>
+            </div>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={loadServiceData}
+            disabled={isLoadingLookups}
+            className="border-rose-300 text-rose-700 bg-white hover:bg-rose-100 shrink-0 rounded-xl"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isLoadingLookups ? "animate-spin" : ""}`} /> Retry
+          </Button>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Main Intake Columns (Left 2 cols) */}
@@ -713,19 +771,19 @@ export default function CreateServicingJobPage() {
                 <Label className="text-xs font-semibold text-slate-700">
                   Assigned Technician <span className="text-rose-500">*</span>
                 </Label>
-                <select
-                  value={selectedTechnicianId}
-                  onChange={(e) => setSelectedTechnicianId(e.target.value)}
-                  className="w-full mt-1 h-9 rounded-md border border-slate-300 bg-white px-3 py-1 text-sm font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                  required
-                >
-                  <option value="">-- Select Technician --</option>
-                  {technicians.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name} ({t.phone || t.employeeId || "Staff"})
-                    </option>
-                  ))}
-                </select>
+                <div className="mt-1">
+                  <SearchableSelect
+                    options={technicians.map((t) => ({
+                      value: t.id,
+                      label: t.name,
+                      secondary: t.phone || t.employeeId || "Staff",
+                    }))}
+                    value={selectedTechnicianId}
+                    onChange={(val) => setSelectedTechnicianId(val)}
+                    placeholder="-- Select Technician --"
+                    required
+                  />
+                </div>
                 <p className="text-[11px] text-slate-400 mt-1">Defaults to logged-in technician</p>
               </div>
 
@@ -803,25 +861,22 @@ export default function CreateServicingJobPage() {
                 <Label className="text-xs font-semibold text-slate-700">
                   Brand <span className="text-rose-500">*</span>
                 </Label>
-                <select
-                  value={selectedBrandId}
-                  disabled={!selectedDeviceTypeId}
-                  onChange={(e) => {
-                    setSelectedBrandId(e.target.value);
-                    if (!e.target.value) setDeviceModel("");
-                  }}
-                  className="w-full mt-1 h-9 rounded-md border border-slate-300 bg-white px-3 py-1 text-sm font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:bg-slate-100 disabled:text-slate-400"
-                  required
-                >
-                  <option value="">
-                    {selectedDeviceTypeId ? "Select Brand..." : "Select device type first..."}
-                  </option>
-                  {brands.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.name}
-                    </option>
-                  ))}
-                </select>
+                <div className="mt-1">
+                  <SearchableSelect
+                    options={brands.map((b) => ({
+                      value: b.id,
+                      label: b.name,
+                    }))}
+                    value={selectedBrandId}
+                    disabled={!selectedDeviceTypeId}
+                    onChange={(val) => {
+                      setSelectedBrandId(val);
+                      if (!val) setDeviceModel("");
+                    }}
+                    placeholder={selectedDeviceTypeId ? "Select Brand..." : "Select device type first..."}
+                    required
+                  />
+                </div>
               </div>
 
               <div>
@@ -962,32 +1017,20 @@ export default function CreateServicingJobPage() {
                       <div className="md:col-span-3">
                         <Label className="text-[11px] font-semibold text-slate-600 mb-1 flex items-center justify-between">
                           <span>Part / Material Name *</span>
-                          {catalogProducts.length > 0 && (
-                            <span className="text-[10px] text-emerald-600 font-normal">Catalog:</span>
-                          )}
+                          <span className="text-[10px] text-emerald-600 font-normal">Live Catalog Search</span>
                         </Label>
-                        <div className="space-y-1">
-                          <Input
-                            placeholder="e.g. OLED Display Panel"
-                            value={row.partName}
-                            onChange={(e) => handleUpdateMaterialRow(row.id, "partName", e.target.value)}
-                            className="h-8 text-xs bg-white font-medium"
-                          />
-                          {catalogProducts.length > 0 && (
-                            <select
-                              value={row.productId || ""}
-                              onChange={(e) => handleUpdateMaterialRow(row.id, "productId", e.target.value)}
-                              className="w-full h-7 text-[11px] rounded border border-slate-300 bg-white px-2 text-slate-700"
-                            >
-                              <option value="">Or Pick from Spare-Parts Catalog...</option>
-                              {catalogProducts.map((p) => (
-                                <option key={p.id} value={p.id}>
-                                  {p.name} (৳{Number(p.purchasePrice || p.sellingPrice || 0)})
-                                </option>
-                              ))}
-                            </select>
-                          )}
-                        </div>
+                        <PartTypeaheadInput
+                          value={row.partName}
+                          onChange={(val) => handleUpdateMaterialRow(row.id, "partName", val)}
+                          onSelectPart={(selected) => {
+                            handleUpdateMaterialRow(row.id, "partName", selected.partName);
+                            handleUpdateMaterialRow(row.id, "productId", selected.productId);
+                            handleUpdateMaterialRow(row.id, "cost", selected.cost);
+                            handleUpdateMaterialRow(row.id, "sourceType", "OWN_STOCK");
+                          }}
+                          branchId={selectedBranchId}
+                          placeholder="Type part name (e.g. S23)"
+                        />
                       </div>
 
                       {/* Source Type Selector (2 cols) */}
@@ -1018,19 +1061,17 @@ export default function CreateServicingJobPage() {
                               <span>Sourced Supplier *</span>
                               <span className="text-[10px] text-emerald-600 font-normal">Registered</span>
                             </Label>
-                            <select
+                            <SearchableSelect
+                              options={suppliers.map((s) => ({
+                                value: s.id,
+                                label: s.name || s.companyName || "Supplier",
+                                secondary: s.phone,
+                              }))}
                               value={row.supplierId}
-                              onChange={(e) => handleUpdateMaterialRow(row.id, "supplierId", e.target.value)}
-                              className="w-full h-8 text-xs rounded-md border border-emerald-300 bg-white px-2 text-slate-800 focus:ring-emerald-500 font-medium"
+                              onChange={(val) => handleUpdateMaterialRow(row.id, "supplierId", val)}
+                              placeholder="Select Supplier..."
                               required
-                            >
-                              <option value="">Select Supplier...</option>
-                              {suppliers.map((s) => (
-                                <option key={s.id} value={s.id}>
-                                  {s.name || s.companyName}
-                                </option>
-                              ))}
-                            </select>
+                            />
                           </div>
                         ) : row.sourceType === "OTHER" ? (
                           <div>

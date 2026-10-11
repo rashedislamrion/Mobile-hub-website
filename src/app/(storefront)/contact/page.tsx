@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { apiGet, apiPost } from "@/lib/api-client";
+import { OFFICIAL_CONTACT } from "@/config/contact";
 
 export default function ContactPage() {
   const [name, setName] = useState("");
@@ -78,7 +79,7 @@ export default function ContactPage() {
           <div className="bg-slate-900 text-white rounded-3xl p-8 space-y-6 shadow-md">
             <h2 className="text-xl font-bold">Contact Information</h2>
             <p className="text-slate-300 text-sm">
-              Our customer care and technical support team is available Saturday to Thursday, 9:00 AM - 8:00 PM.
+              Our customer care and technical support team is available {OFFICIAL_CONTACT.openingHours.display}.
             </p>
 
             <div className="space-y-4 pt-2">
@@ -88,7 +89,7 @@ export default function ContactPage() {
                 </div>
                 <div>
                   <p className="text-xs text-slate-400 font-semibold uppercase">Hotline</p>
-                  <p className="text-sm font-bold text-white">{footerSettings?.supportPhone || "01602670922"}</p>
+                  <p className="text-sm font-bold text-white">{footerSettings?.supportPhone || OFFICIAL_CONTACT.phone.display}</p>
                 </div>
               </div>
 
@@ -98,7 +99,7 @@ export default function ContactPage() {
                 </div>
                 <div>
                   <p className="text-xs text-slate-400 font-semibold uppercase">Email</p>
-                  <p className="text-sm font-bold text-white">{footerSettings?.supportEmail || "mobilehubbd2@gmail.com"}</p>
+                  <p className="text-sm font-bold text-white">{footerSettings?.supportEmail || OFFICIAL_CONTACT.email}</p>
                 </div>
               </div>
 
@@ -111,7 +112,7 @@ export default function ContactPage() {
                   <p className="text-sm text-slate-200">
                     {branches.length > 0
                       ? `${branches[0].name}, ${branches[0].address}`
-                      : "Eastern Plaza (Flagship), 2/13 Eastern Plaza Shopping Complex, Hatirpool, Dhaka 1205"}
+                      : `Eastern Plaza (Flagship), ${OFFICIAL_CONTACT.address.en}`}
                   </p>
                 </div>
               </div>

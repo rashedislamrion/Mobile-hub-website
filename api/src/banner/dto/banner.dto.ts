@@ -11,8 +11,8 @@ import { StaffStatus } from '@prisma/client';
 
 export class CreateBannerDto {
   @IsString()
-  @IsNotEmpty()
-  imageUrl: string;
+  @IsOptional()
+  imageUrl?: string;
 
   @IsString()
   @IsOptional()

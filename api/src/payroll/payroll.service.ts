@@ -12,28 +12,49 @@ import {
   WalletTxnType,
 } from '@prisma/client';
 
+import { BranchScopeService } from '../common/branch/branch-scope.service';
+import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
+
 @Injectable()
 export class PayrollService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private branchScopeService: BranchScopeService,
+  ) {}
 
   private parseMonthStringToDate(monthStr: string): Date {
     const [year, month] = monthStr.split('-').map(Number);
     return new Date(Date.UTC(year, month - 1, 1, 0, 0, 0));
   }
 
-  async findAll(query?: {
-    department?: string;
-    month?: string;
-    status?: PayrollStatus;
-    search?: string;
-    page?: number;
-    limit?: number;
-  }) {
+  async findAll(
+    query?: {
+      branch?: string;
+      department?: string;
+      month?: string;
+      status?: PayrollStatus;
+      search?: string;
+      page?: number;
+      limit?: number;
+    },
+    user?: JwtPayload,
+  ) {
     const page = Math.max(1, Number(query?.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(query?.limit) || 20));
     const skip = (page - 1) * limit;
 
     const where: Prisma.PayrollWhereInput = {};
+
+    const branchFilter = await this.branchScopeService.getBranchFilter(
+      user,
+      query?.branch,
+    );
+    if (branchFilter !== undefined) {
+      where.staff = {
+        ...(where.staff as Prisma.StaffWhereInput),
+        branchId: branchFilter,
+      };
+    }
 
     if (query?.month) {
       const startOfMonth = this.parseMonthStringToDate(query.month);
@@ -135,7 +156,7 @@ export class PayrollService {
     };
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, user?: JwtPayload) {
     const payroll = await this.prisma.payroll.findUnique({
       where: { id },
       include: {
@@ -151,10 +172,18 @@ export class PayrollService {
 
     if (!payroll)
       throw new NotFoundException(`Payroll record "${id}" not found.`);
+
+    if (user) {
+      await this.branchScopeService.validateBranchAccess(
+        user,
+        payroll.staff.branchId,
+      );
+    }
+
     return payroll;
   }
 
-  async runPayroll(dto: RunPayrollDto) {
+  async runPayroll(dto: RunPayrollDto, user?: JwtPayload) {
     const monthDate = this.parseMonthStringToDate(dto.month);
 
     const staffWhere: Prisma.StaffWhereInput = {
@@ -162,6 +191,14 @@ export class PayrollService {
     };
     if (dto.departmentId) {
       staffWhere.departmentId = dto.departmentId;
+    }
+
+    const branchFilter = await this.branchScopeService.getBranchFilter(
+      user,
+      dto.branchId,
+    );
+    if (branchFilter !== undefined) {
+      staffWhere.branchId = branchFilter;
     }
 
     const activeStaff = await this.prisma.staff.findMany({
@@ -249,14 +286,23 @@ export class PayrollService {
     };
   }
 
-  async markPaid(id: string, dto: MarkPaidDto, recordedById: string) {
-    const payroll = await this.prisma.payroll.findUnique({
-      where: { id },
-      include: { staff: true },
-    });
+  async markPaid(
+    id: string,
+    dto: MarkPaidDto,
+    user?: JwtPayload | string,
+  ) {
+    const userPayload = typeof user === 'string' ? undefined : user;
+    let recordedById = typeof user === 'string' ? user : user?.sub;
+    if (!recordedById) {
+      const adminStaff = await this.prisma.staff.findFirst({
+        where: { status: 'ACTIVE' },
+        orderBy: { createdAt: 'asc' },
+      });
+      recordedById = adminStaff?.id || 'system';
+    }
 
-    if (!payroll)
-      throw new NotFoundException(`Payroll record "${id}" not found.`);
+    const payroll = await this.findOne(id, userPayload);
+
     if (payroll.status === PayrollStatus.PAID) {
       throw new BadRequestException(
         'This payroll record has already been marked as PAID.',
@@ -366,8 +412,8 @@ export class PayrollService {
     });
   }
 
-  async getPayslip(id: string) {
-    const payroll = await this.findOne(id);
+  async getPayslip(id: string, user?: JwtPayload) {
+    const payroll = await this.findOne(id, user);
 
     return {
       id: payroll.id,

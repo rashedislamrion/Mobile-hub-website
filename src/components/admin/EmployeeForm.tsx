@@ -21,6 +21,7 @@ import {
   HelpCircle,
   Percent,
   Sparkles,
+  RefreshCw,
 } from "lucide-react";
 import {
   Form,
@@ -32,6 +33,7 @@ import {
   FormDescription,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { apiGet, apiPost, apiPatch, getStaffToken, API_BASE_URL } from "@/lib/api-client";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -107,7 +109,7 @@ export function EmployeeForm({ initialData, isEdit }: EmployeeFormProps) {
       gender: initialData?.gender || "Male",
       dob: initialData?.dob
         ? new Date(initialData.dob).toISOString().split("T")[0]
-        : "1996-01-01",
+        : "",
       nid: initialData?.nidNumber || "",
 
       password: "",
@@ -122,7 +124,7 @@ export function EmployeeForm({ initialData, isEdit }: EmployeeFormProps) {
         : new Date().toISOString().split("T")[0],
       employmentType: initialData?.employmentType || "FULL_TIME",
       reportingManagerId: initialData?.reportingManagerId || "",
-      basicSalary: initialData?.basicSalary ? Number(initialData.basicSalary) : 25000,
+      basicSalary: initialData?.basicSalary ? Number(initialData.basicSalary) : 0,
       bonusLimit: initialData?.bonusLimit ? Number(initialData.bonusLimit) : 0,
 
       branchIds: initialBranchIds,
@@ -139,23 +141,35 @@ export function EmployeeForm({ initialData, isEdit }: EmployeeFormProps) {
   const isTechnicianWatch = form.watch("isTechnician");
   const selectedBranchIds = form.watch("branchIds");
 
+  const [lookupErrors, setLookupErrors] = useState<string | null>(null);
+  const [isLoadingLookups, setIsLoadingLookups] = useState(false);
+
+  const loadLookups = async () => {
+    try {
+      setIsLoadingLookups(true);
+      setLookupErrors(null);
+      const [deptRes, roleRes, branchRes, mgrRes] = await Promise.all([
+        apiGet<any[]>("/departments"),
+        apiGet<any[]>("/roles"),
+        apiGet<any[]>("/branches"),
+        apiGet<{ data: any[] }>("/employees?limit=100"),
+      ]);
+      setDepartments(Array.isArray(deptRes) ? deptRes : []);
+      setRoles(Array.isArray(roleRes) ? roleRes : []);
+      setBranches(Array.isArray(branchRes) ? branchRes : []);
+      const allEmp = mgrRes?.data || (Array.isArray(mgrRes) ? mgrRes : []);
+      setManagers(allEmp.filter((e: any) => e.id !== initialData?.id));
+    } catch (err: any) {
+      console.error("Failed to load employee metadata:", err);
+      setLookupErrors("Failed to load departments, roles or branches. Please retry.");
+      toast.error("Failed to load employee configuration data");
+    } finally {
+      setIsLoadingLookups(false);
+    }
+  };
+
   useEffect(() => {
-    Promise.all([
-      apiGet<any[]>("/departments"),
-      apiGet<any[]>("/roles"),
-      apiGet<any[]>("/branches"),
-      apiGet<{ data: any[] }>("/employees?limit=100"),
-    ])
-      .then(([deptRes, roleRes, branchRes, mgrRes]) => {
-        setDepartments(Array.isArray(deptRes) ? deptRes : []);
-        setRoles(Array.isArray(roleRes) ? roleRes : []);
-        setBranches(Array.isArray(branchRes) ? branchRes : []);
-        const allEmp = mgrRes?.data || (Array.isArray(mgrRes) ? mgrRes : []);
-        setManagers(allEmp.filter((e: any) => e.id !== initialData?.id));
-      })
-      .catch((err) => {
-        console.error("Failed to load select data:", err);
-      });
+    loadLookups();
   }, [initialData?.id]);
 
   const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -309,6 +323,23 @@ export function EmployeeForm({ initialData, isEdit }: EmployeeFormProps) {
           </button>
         </div>
       </div>
+
+      {lookupErrors && (
+        <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 flex items-center justify-between text-rose-800 text-xs">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+            <span>{lookupErrors}</span>
+          </div>
+          <button
+            type="button"
+            onClick={loadLookups}
+            disabled={isLoadingLookups}
+            className="flex items-center gap-1 px-3 py-1 bg-white border border-rose-200 text-rose-700 rounded-md font-medium hover:bg-rose-50 transition-colors"
+          >
+            <RefreshCw className={`w-3 h-3 ${isLoadingLookups ? "animate-spin" : ""}`} /> Retry
+          </button>
+        </div>
+      )}
 
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
@@ -681,17 +712,15 @@ export function EmployeeForm({ initialData, isEdit }: EmployeeFormProps) {
                       Department
                     </FormLabel>
                     <FormControl>
-                      <select
-                        {...field}
-                        className="w-full h-10 px-3 py-2 text-sm rounded-md border border-input bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                      >
-                        <option value="">-- None / General --</option>
-                        {departments.map((d) => (
-                          <option key={d.id} value={d.id}>
-                            {d.name}
-                          </option>
-                        ))}
-                      </select>
+                      <SearchableSelect
+                        options={[
+                          { value: "", label: "-- None / General --" },
+                          ...departments.map((d) => ({ value: d.id, label: d.name })),
+                        ]}
+                        value={field.value || ""}
+                        onChange={(val) => field.onChange(val)}
+                        placeholder="Select Department..."
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -707,17 +736,17 @@ export function EmployeeForm({ initialData, isEdit }: EmployeeFormProps) {
                       Assigned Role <span className="text-red-500">*</span>
                     </FormLabel>
                     <FormControl>
-                      <select
-                        {...field}
-                        className="w-full h-10 px-3 py-2 text-sm rounded-md border border-input bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                      >
-                        <option value="">-- Select Role --</option>
-                        {roles.map((r) => (
-                          <option key={r.id} value={r.id}>
-                            {r.name} ({r.scope === "GLOBAL" ? "Global Admin" : "Branch Restricted"})
-                          </option>
-                        ))}
-                      </select>
+                      <SearchableSelect
+                        options={roles.map((r) => ({
+                          value: r.id,
+                          label: r.name,
+                          secondary: r.scope === "GLOBAL" ? "Global Admin" : "Branch Restricted",
+                        }))}
+                        value={field.value || ""}
+                        onChange={(val) => field.onChange(val)}
+                        placeholder="Select Role..."
+                        required
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>

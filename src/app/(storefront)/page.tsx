@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { 
   ArrowRight, LayoutGrid, Monitor, Battery, Zap, Volume2, 
@@ -12,6 +13,34 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiGet, getImageUrl } from "@/lib/api-client";
 
+export const metadata: Metadata = {
+  title: {
+    absolute: "MobileHubBD - Premium Smartphone Parts & Repair Services",
+  },
+  description:
+    "Bangladesh's leading platform for genuine smartphone displays, batteries, accessories, and professional repair services.",
+  alternates: {
+    canonical: "/",
+  },
+  openGraph: {
+    title: "MobileHubBD - Premium Smartphone Parts & Repair Services",
+    description:
+      "Bangladesh's leading platform for genuine smartphone displays, batteries, accessories, and professional repair services.",
+    url: "/",
+    siteName: "MobileHubBD",
+  },
+};
+
+/**
+ * STOREFRONT PRODUCT VISIBILITY RULES:
+ * 1. Product must have `status: 'ACTIVE'` (Draft/Archived are excluded by backend `findAllPublic`).
+ * 2. Product must belong to an active category (`categoryId`).
+ * 3. Featured section requires `isFeatured: true`.
+ * 4. Best Deals section requires `isBestDeal: true`.
+ * 5. Smartphones section requires `productCategory: 'PHONE'` or `productType: 'phone'`.
+ * 6. Popular section displays top active items by views/orders, falling back to newest active items.
+ * 7. ISR cache duration is 30 seconds (maximum 60s), ensuring newly published products appear promptly.
+ */
 export const revalidate = 30;
 
 const categoryIconMap: Record<string, React.ReactNode> = {
@@ -31,46 +60,49 @@ const categoryIconMap: Record<string, React.ReactNode> = {
 };
 
 async function getHomeData() {
+  const fetchOpts = { next: { revalidate: 30 } };
   try {
-    const [categoriesTree, featuredRes, bestDealsRes, popularRes, blogsRes, phonesRes] = await Promise.all([
-      apiGet<any>("/categories/tree").catch((e) => {
+    const [categoriesTree, featuredRes, bestDealsRes, popularRes, newestRes, blogsRes, phonesRes] = await Promise.all([
+      apiGet<any>("/categories/tree", undefined, fetchOpts).catch((e) => {
         console.error("Categories fetch error:", e);
         return [];
       }),
-      apiGet<any>("/products", { featured: "true", limit: 10 }).catch((e) => {
+      apiGet<any>("/products", { featured: "true", limit: 10 }, fetchOpts).catch((e) => {
         console.error("Featured products fetch error:", e);
         return { data: [] };
       }),
-      apiGet<any>("/products", { bestDeal: "true", limit: 10 }).catch((e) => {
+      apiGet<any>("/products", { bestDeal: "true", limit: 10 }, fetchOpts).catch((e) => {
         console.error("Best deals fetch error:", e);
         return { data: [] };
       }),
-      apiGet<any>("/products", { limit: 12, sort: "popular" }).catch((e) => {
+      apiGet<any>("/products", { limit: 12, sort: "popular" }, fetchOpts).catch((e) => {
         console.error("Products popular fetch error:", e);
         return { data: [] };
       }),
-      apiGet<any>("/blogs").catch((e) => {
+      apiGet<any>("/products", { limit: 12, sort: "newest" }, fetchOpts).catch((e) => {
+        console.error("Products newest fetch error:", e);
+        return { data: [] };
+      }),
+      apiGet<any>("/blogs", undefined, fetchOpts).catch((e) => {
         console.error("Blogs fetch error:", e);
         return [];
       }),
-      apiGet<any>("/products", { type: "PHONE", limit: 10 }).catch(() => ({ data: [] })),
+      apiGet<any>("/products", { type: "PHONE", limit: 10 }, fetchOpts).catch(() => ({ data: [] })),
     ]);
 
     const categories = Array.isArray(categoriesTree)
       ? categoriesTree
       : categoriesTree?.data || [];
 
-    let fallbackProducts = Array.isArray(popularRes)
+    const newestProducts = Array.isArray(newestRes)
+      ? newestRes
+      : newestRes?.data || [];
+
+    const popularProducts = Array.isArray(popularRes)
       ? popularRes
       : popularRes?.data || [];
 
-    if (fallbackProducts.length < 4) {
-      const newestRes = await apiGet<any>("/products", { limit: 12, sort: "newest" }).catch(() => ({ data: [] }));
-      const newestData = Array.isArray(newestRes) ? newestRes : newestRes?.data || [];
-      if (newestData.length > 0) {
-        fallbackProducts = newestData;
-      }
-    }
+    const fallbackProducts = newestProducts.length > 0 ? newestProducts : popularProducts;
 
     const featuredData = Array.isArray(featuredRes) ? featuredRes : featuredRes?.data || [];
     const bestDealsData = Array.isArray(bestDealsRes) ? bestDealsRes : bestDealsRes?.data || [];
@@ -85,6 +117,8 @@ async function getHomeData() {
     return {
       categories,
       products: fallbackProducts,
+      newestProducts,
+      popularProducts,
       featuredProducts,
       bestDeals,
       phones,
@@ -95,6 +129,8 @@ async function getHomeData() {
     return {
       categories: [],
       products: [],
+      newestProducts: [],
+      popularProducts: [],
       featuredProducts: [],
       bestDeals: [],
       phones: [],
@@ -104,7 +140,7 @@ async function getHomeData() {
 }
 
 export default async function HomePage() {
-  const { categories, products, featuredProducts, bestDeals, phones, blogs } = await getHomeData();
+  const { categories, products, newestProducts, popularProducts, featuredProducts, bestDeals, phones, blogs } = await getHomeData();
 
   return (
     <div className="flex flex-col gap-12 pb-16">
@@ -161,10 +197,13 @@ export default async function HomePage() {
 
       {/* 3. Best Deals & Spare Parts */}
       <section className="container mx-auto px-4">
-        <Tabs defaultValue="all" className="w-full">
+        <Tabs defaultValue="newest" className="w-full">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
             <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Best Deals & Spare Parts</h2>
             <TabsList className="bg-slate-100 p-1 rounded-xl">
+              <TabsTrigger value="newest" className="rounded-lg text-xs font-bold px-4 py-2">
+                New Arrivals
+              </TabsTrigger>
               <TabsTrigger value="all" className="rounded-lg text-xs font-bold px-4 py-2">
                 All Popular
               </TabsTrigger>
@@ -174,14 +213,27 @@ export default async function HomePage() {
             </TabsList>
           </div>
 
-          <TabsContent value="all" className="mt-0 outline-none">
-            {bestDeals.length === 0 ? (
+          <TabsContent value="newest" className="mt-0 outline-none">
+            {newestProducts.length === 0 ? (
               <div className="py-12 text-center text-slate-400 text-sm border rounded-xl">
                 No products found.
               </div>
             ) : (
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 md:gap-6">
-                {bestDeals.map((product: any) => (
+                {newestProducts.map((product: any) => (
+                  <ProductCard key={product.id} product={product} />
+                ))}
+              </div>
+            )}
+          </TabsContent>
+          <TabsContent value="all" className="mt-0 outline-none">
+            {popularProducts.length === 0 ? (
+              <div className="py-12 text-center text-slate-400 text-sm border rounded-xl">
+                No products found.
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 md:gap-6">
+                {popularProducts.map((product: any) => (
                   <ProductCard key={product.id} product={product} />
                 ))}
               </div>
@@ -189,7 +241,10 @@ export default async function HomePage() {
           </TabsContent>
           <TabsContent value="spare" className="mt-0 outline-none">
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 md:gap-6">
-              {bestDeals.map((product: any) => (
+              {(bestDeals.filter((p: any) => p.category?.slug?.includes('display') || p.productType === 'spare_part').length > 0
+                ? bestDeals.filter((p: any) => p.category?.slug?.includes('display') || p.productType === 'spare_part')
+                : bestDeals
+              ).map((product: any) => (
                 <ProductCard key={product.id} product={product} />
               ))}
             </div>

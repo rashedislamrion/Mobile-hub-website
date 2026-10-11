@@ -162,18 +162,11 @@ export default function CreateBlogPage() {
         formData.append("image", file);
       }
 
-      const token = getAuthToken();
-      const res = await fetch(`${API_BASE_URL}/blogs`, {
-        method: "POST",
-        headers: {
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: formData,
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.message || "Failed to create blog post");
+      if (editId) {
+        // If edit, use PATCH or POST
+        await apiPost(`/blogs`, formData, { authScope: "STAFF" });
+      } else {
+        await apiPost(`/blogs`, formData, { authScope: "STAFF" });
       }
 
       toast.success("Blog article published successfully!");

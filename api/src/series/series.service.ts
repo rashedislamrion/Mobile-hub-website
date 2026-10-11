@@ -89,7 +89,7 @@ export class SeriesService {
     const series = await this.prisma.series.findUnique({
       where: { id },
       include: {
-        products: { take: 1 },
+        _count: { select: { products: true } },
       },
     });
 
@@ -97,10 +97,14 @@ export class SeriesService {
       throw new NotFoundException(`Series with ID "${id}" not found`);
     }
 
-    if (series.products.length > 0) {
-      throw new ConflictException(
-        `Cannot delete series "${series.name}" because it is linked to products.`,
-      );
+    if (series._count.products > 0) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        message: `Cannot delete series "${series.name}". It is linked to ${series._count.products} product(s). Please reassign or delete them first, or deactivate the series.`,
+        canDeactivate: true,
+        blockers: { products: series._count.products },
+      });
     }
 
     return this.prisma.series.delete({

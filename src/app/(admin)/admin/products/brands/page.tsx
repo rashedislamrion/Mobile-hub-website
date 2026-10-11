@@ -43,6 +43,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { AdminTableState } from "@/components/admin/AdminTableState";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -77,6 +78,7 @@ export default function BrandsPage() {
 
   const [brands, setBrands] = useState<BrandItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
 
@@ -110,10 +112,12 @@ export default function BrandsPage() {
   // Fetch Brands
   const fetchData = useCallback(async () => {
     setIsLoading(true);
+    setError(null);
     try {
       const res = await apiGet<BrandItem[]>("/brands");
       setBrands(Array.isArray(res) ? res : []);
     } catch (err: any) {
+      setError(err.message || "Failed to load brands");
       toast.error(err.message || "Failed to load brands");
     } finally {
       setIsLoading(false);
@@ -415,29 +419,19 @@ export default function BrandsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {isLoading ? (
-                <tr>
-                  <td colSpan={6} className="py-16 text-center text-slate-400">
-                    <div className="flex flex-col items-center justify-center gap-2">
-                      <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
-                      <span>Loading brand records...</span>
-                    </div>
-                  </td>
-                </tr>
-              ) : filteredBrands.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="py-16 text-center text-slate-400">
-                    <div className="flex flex-col items-center justify-center gap-1">
-                      <Award className="w-8 h-8 text-slate-300 mb-1" />
-                      <p className="font-semibold text-slate-600">No brands found</p>
-                      <p className="text-xs text-slate-400">
-                        Try modifying your search or create a new brand.
-                      </p>
-                    </div>
-                  </td>
-                </tr>
-              ) : (
-                filteredBrands.map((brand, idx) => {
+              <AdminTableState
+                isLoading={isLoading}
+                error={error}
+                isEmpty={filteredBrands.length === 0}
+                onRetry={fetchData}
+                colSpan={6}
+                loadingRows={5}
+                emptyTitle="No brands found"
+                emptyDescription="Try modifying your search or create a new brand."
+                emptyActionLabel="Create Brand"
+                onEmptyAction={handleOpenCreate}
+              >
+                {filteredBrands.map((brand, idx) => {
                   const logoUrl = brand.logo
                     ? brand.logo.startsWith("http")
                       ? brand.logo
@@ -529,8 +523,8 @@ export default function BrandsPage() {
                       </td>
                     </tr>
                   );
-                })
-              )}
+                })}
+              </AdminTableState>
             </tbody>
           </table>
         </div>

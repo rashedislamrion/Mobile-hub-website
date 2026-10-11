@@ -9,6 +9,7 @@ import {
   Globe,
 } from "lucide-react";
 import { numberToWords } from "@/lib/number-to-words";
+import { OFFICIAL_CONTACT } from "@/config/contact";
 
 export interface PosInvoiceReceiptProps {
   order: any;
@@ -22,24 +23,24 @@ export function PosInvoiceReceipt({ order, shopSettings }: PosInvoiceReceiptProp
   const shopName =
     order.branch?.name
       ? `MOBILE HUB BD (${order.branch.name.toUpperCase()})`
-      : shopSettings?.companyName || "MOBILE HUB BD";
+      : shopSettings?.companyName || OFFICIAL_CONTACT.storeName;
 
   const shopAddress =
     order.branch?.address ||
     shopSettings?.address ||
     shopSettings?.companyAddress ||
-    "2/13 Eastern Plaza Shopping Complex, Hatirpool, Dhaka 1205";
+    OFFICIAL_CONTACT.address.en;
 
   const shopPhone =
     order.branch?.phone ||
     shopSettings?.phone ||
     shopSettings?.companyPhone ||
-    "01602670922";
+    OFFICIAL_CONTACT.phone.display;
 
   const shopWebsite =
     shopSettings?.website ||
     shopSettings?.siteUrl ||
-    "www.mobilehubbd.tech";
+    OFFICIAL_CONTACT.website;
 
   // Customer Information
   const customerName =

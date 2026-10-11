@@ -111,7 +111,53 @@ export class AttributeService {
   }
 
   async remove(id: string) {
-    await this.findOne(id);
+    const attr = await this.findOne(id);
+    const values = await this.prisma.attributeValue.findMany({
+      where: { attributeId: id },
+      select: { value: true },
+    });
+    const valueStrings = values.map((v) => v.value);
+
+    let variantUsageCount = 0;
+    let specUsageCount = 0;
+
+    if (valueStrings.length > 0) {
+      const [vCount, sCount] = await Promise.all([
+        this.prisma.productVariant.count({
+          where: {
+            OR: [
+              { color: { in: valueStrings, mode: 'insensitive' } },
+              { quality: { in: valueStrings, mode: 'insensitive' } },
+            ],
+          },
+        }),
+        this.prisma.productSpecification.count({
+          where: {
+            OR: [
+              { label: { equals: attr.name, mode: 'insensitive' } },
+              { value: { in: valueStrings, mode: 'insensitive' } },
+            ],
+          },
+        }),
+      ]);
+      variantUsageCount = vCount;
+      specUsageCount = sCount;
+    }
+
+    const totalUsage = variantUsageCount + specUsageCount;
+    if (totalUsage > 0) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        message: `Cannot delete attribute "${attr.name}". It is used by ${variantUsageCount} product variant(s) and ${specUsageCount} specification(s). Please deactivate it instead.`,
+        canDeactivate: true,
+        blockers: {
+          variants: variantUsageCount,
+          specifications: specUsageCount,
+        },
+      });
+    }
+
     return this.prisma.attribute.delete({
       where: { id },
     });

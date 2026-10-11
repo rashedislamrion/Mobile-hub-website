@@ -33,6 +33,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { AddSalaryPayrollModal } from "@/components/admin/hrm/AddSalaryPayrollModal";
+import { AdminTableState } from "@/components/admin/AdminTableState";
 
 interface StaffPaymentRecord {
   id: string;
@@ -92,6 +93,7 @@ export default function PayrollPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   // Filters
   const [searchTerm, setSearchTerm] = useState("");
@@ -138,6 +140,7 @@ export default function PayrollPage() {
   const loadData = useCallback(async () => {
     try {
       setIsLoading(true);
+      setError(null);
       const params: Record<string, any> = {
         page: currentPage,
         limit: 15,
@@ -157,6 +160,7 @@ export default function PayrollPage() {
       setTotalCount(res?.meta?.total || (res?.data || []).length);
       setTotalPages(res?.meta?.totalPages || 1);
     } catch (err: any) {
+      setError(err.message || "Failed to load payment ledger");
       toast.error(err.message || "Failed to load payment ledger");
     } finally {
       setIsLoading(false);
@@ -391,23 +395,19 @@ export default function PayrollPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border text-foreground">
-              {isLoading ? (
-                <tr>
-                  <td colSpan={8} className="p-8 text-center text-muted-foreground">
-                    <div className="flex items-center justify-center gap-2">
-                      <div className="h-5 w-5 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin" />
-                      <span>Loading payment transactions...</span>
-                    </div>
-                  </td>
-                </tr>
-              ) : data.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="p-8 text-center text-muted-foreground">
-                    No payment records found. Use &quot;Add Payment&quot; or &quot;Run Monthly Payroll&quot; to disburse payments.
-                  </td>
-                </tr>
-              ) : (
-                data.map((txn) => {
+              <AdminTableState
+                isLoading={isLoading}
+                error={error}
+                isEmpty={data.length === 0}
+                onRetry={loadData}
+                colSpan={8}
+                loadingRows={5}
+                emptyTitle="No records found"
+                emptyDescription="No payment records found. Use Add Payment or Run Monthly Payroll to disburse payments."
+                emptyActionLabel="Add Payment"
+                onEmptyAction={() => setAddPaymentModalOpen(true)}
+              >
+                {data.map((txn) => {
                   const formattedDate = new Date(txn.createdAt).toLocaleDateString("en-GB", {
                     day: "2-digit",
                     month: "short",
@@ -508,8 +508,8 @@ export default function PayrollPage() {
                       </td>
                     </tr>
                   );
-                })
-              )}
+                })}
+              </AdminTableState>
             </tbody>
           </table>
         </div>
@@ -517,8 +517,9 @@ export default function PayrollPage() {
         {/* Pagination Bar */}
         <div className="p-4 border-t border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-muted-foreground">
           <div>
-            Showing <span className="font-semibold text-foreground">{data.length}</span> of{" "}
-            <span className="font-semibold text-foreground">{totalCount}</span> ledger entries
+            {totalCount === 0
+              ? "Showing 0 ledger entries"
+              : `Showing ${(currentPage - 1) * 15 + 1} to ${Math.min(currentPage * 15, totalCount)} of ${totalCount.toLocaleString()} ledger entries`}
           </div>
           <div className="flex items-center gap-2">
             <button

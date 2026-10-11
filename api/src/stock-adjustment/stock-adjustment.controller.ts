@@ -69,8 +69,8 @@ export class StockAdjustmentController {
     action: PermissionAction.READ,
   })
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.stockAdjustmentService.findOne(id);
+  findOne(@Param('id') id: string, @CurrentUser() user?: JwtPayload) {
+    return this.stockAdjustmentService.findOne(id, user);
   }
 
   @RequirePermission({

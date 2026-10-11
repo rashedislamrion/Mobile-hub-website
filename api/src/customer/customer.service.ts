@@ -286,7 +286,7 @@ export class CustomerService {
       where: { id },
       include: {
         _count: {
-          select: { orders: true },
+          select: { orders: true, serviceJobs: true },
         },
       },
     });
@@ -295,13 +295,32 @@ export class CustomerService {
       throw new NotFoundException(`Customer with ID "${id}" not found.`);
     }
 
+    const blockers: string[] = [];
     if (customer._count.orders > 0) {
-      throw new BadRequestException(
-        `Cannot delete customer with ${customer._count.orders} existing orders to protect order and financial records. You may set status to INACTIVE.`,
-      );
+      blockers.push(`${customer._count.orders} order(s)`);
+    }
+    if (customer._count.serviceJobs > 0) {
+      blockers.push(`${customer._count.serviceJobs} service job(s)`);
     }
 
-    return this.prisma.customer.delete({ where: { id } });
+    if (blockers.length > 0) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        message: `Cannot delete customer "${customer.name}". It has ${blockers.join(' and ')}. Please set status to INACTIVE instead.`,
+        canDeactivate: true,
+        blockers: {
+          orders: customer._count.orders,
+          serviceJobs: customer._count.serviceJobs,
+        },
+      });
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      await tx.customerActivity.deleteMany({ where: { customerId: id } });
+      await tx.address.deleteMany({ where: { customerId: id } });
+      return tx.customer.delete({ where: { id } });
+    });
   }
 
   async getSummary(

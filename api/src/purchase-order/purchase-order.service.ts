@@ -16,30 +16,51 @@ import {
   StockAdjustmentType,
   WalletTxnType,
 } from '@prisma/client';
+import { Response } from 'express';
+import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
+import { BranchScopeService } from '../common/branch/branch-scope.service';
+import {
+  resolvePrivateFilePath,
+  streamLocalFile,
+} from '../common/upload/private-file.helper';
+import { storageService } from '../common/upload/storage.service';
 import { resolveUploadedFile } from '../common/upload/multer.config';
 
 @Injectable()
 export class PurchaseOrderService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private branchScopeService: BranchScopeService,
+  ) {}
 
-  async findAll(query?: {
-    branch?: string;
-    supplier?: string;
-    status?: PurchaseOrderStatus;
-    paymentStatus?: string;
-    dateFrom?: string;
-    dateTo?: string;
-    search?: string;
-    page?: number;
-    limit?: number;
-  }) {
+  async findAll(
+    query?: {
+      branch?: string;
+      supplier?: string;
+      status?: PurchaseOrderStatus;
+      paymentStatus?: string;
+      dateFrom?: string;
+      dateTo?: string;
+      search?: string;
+      page?: number;
+      limit?: number;
+    },
+    user?: JwtPayload,
+  ) {
     const page = Math.max(1, Number(query?.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(query?.limit) || 20));
     const skip = (page - 1) * limit;
 
     const where: Prisma.PurchaseOrderWhereInput = {};
 
-    if (query?.branch) where.branchId = query.branch;
+    const branchFilter = await this.branchScopeService.getBranchFilter(
+      user,
+      query?.branch,
+    );
+    if (branchFilter !== undefined) {
+      where.branchId = branchFilter;
+    }
+
     if (query?.supplier) where.supplierId = query.supplier;
     if (query?.status) where.status = query.status;
 
@@ -120,7 +141,7 @@ export class PurchaseOrderService {
           where: {
             createdAt: { gte: startOfMonth },
             status: { not: PurchaseOrderStatus.CANCELLED },
-            ...(query?.branch ? { branchId: query.branch } : {}),
+            ...(branchFilter !== undefined ? { branchId: branchFilter } : {}),
           },
           select: { grandTotal: true, amountPaid: true, dueAmount: true },
         }),
@@ -132,7 +153,7 @@ export class PurchaseOrderService {
                 PurchaseOrderStatus.PARTIALLY_RECEIVED,
               ],
             },
-            ...(query?.branch ? { branchId: query.branch } : {}),
+            ...(branchFilter !== undefined ? { branchId: branchFilter } : {}),
           },
         }),
       ]);
@@ -184,7 +205,7 @@ export class PurchaseOrderService {
     };
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, user?: JwtPayload) {
     const po = await this.prisma.purchaseOrder.findUnique({
       where: { id },
       include: {
@@ -207,21 +228,23 @@ export class PurchaseOrderService {
     });
 
     if (!po) throw new NotFoundException(`Purchase Order "${id}" not found.`);
+    if (user) {
+      await this.branchScopeService.validateBranchAccess(user, po.branchId);
+    }
     return po;
   }
 
-  async create(dto: CreatePurchaseOrderDto, recordedById: string) {
+  async create(dto: CreatePurchaseOrderDto, user: JwtPayload) {
+    const recordedById = user.sub;
     const supplier = await this.prisma.supplier.findUnique({
       where: { id: dto.supplierId },
     });
     if (!supplier) throw new NotFoundException('Supplier not found.');
 
-    let branchId = dto.branchId;
-    if (!branchId) {
-      const defaultBranch = await this.prisma.branch.findFirst();
-      if (!defaultBranch) throw new NotFoundException('No branch available.');
-      branchId = defaultBranch.id;
-    }
+    const branchId = await this.branchScopeService.determineCreateBranchId(
+      user,
+      dto.branchId,
+    );
 
     if (!dto.items || dto.items.length === 0) {
       throw new BadRequestException(
@@ -641,8 +664,10 @@ export class PurchaseOrderService {
     });
   }
 
-  async complete(id: string, recordedById: string = 'system') {
-    const po = await this.findOne(id);
+  async complete(id: string, user?: JwtPayload | string) {
+    const userPayload = typeof user === 'object' ? user : undefined;
+    const po = await this.findOne(id, userPayload);
+    const recordedById = typeof user === 'string' ? user : user?.sub || 'system';
     if (po.status === PurchaseOrderStatus.RECEIVED) {
       return po;
     }
@@ -659,14 +684,14 @@ export class PurchaseOrderService {
       .filter((i) => i.quantityReceived > 0);
 
     if (unreceivedItems.length > 0) {
-      await this.receiveItems(id, { items: unreceivedItems });
+      await this.receiveItems(id, { items: unreceivedItems }, userPayload);
     }
 
-    return this.findOne(id);
+    return this.findOne(id, userPayload);
   }
 
-  async receiveItems(id: string, dto: ReceivePurchaseOrderDto) {
-    const po = await this.findOne(id);
+  async receiveItems(id: string, dto: ReceivePurchaseOrderDto, user?: JwtPayload) {
+    const po = await this.findOne(id, user);
 
     if (po.status === PurchaseOrderStatus.CANCELLED) {
       throw new BadRequestException(
@@ -787,8 +812,14 @@ export class PurchaseOrderService {
     });
   }
 
-  async returnItems(id: string, dto: ReturnPurchaseOrderDto, staffId: string) {
-    const po = await this.findOne(id);
+  async returnItems(
+    id: string,
+    dto: ReturnPurchaseOrderDto,
+    user?: JwtPayload | string,
+  ) {
+    const userPayload = typeof user === 'object' ? user : undefined;
+    const po = await this.findOne(id, userPayload);
+    const staffId = typeof user === 'string' ? user : user?.sub || 'system';
 
     if (
       po.status === PurchaseOrderStatus.CANCELLED ||
@@ -951,8 +982,8 @@ export class PurchaseOrderService {
     });
   }
 
-  async attachDocument(id: string, file: Express.Multer.File) {
-    const po = await this.findOne(id);
+  async attachDocument(id: string, file: Express.Multer.File, user?: JwtPayload) {
+    const po = await this.findOne(id, user);
     const documentUrl =
       (await resolveUploadedFile(file, 'purchase-documents')) ||
       `/uploads/purchase-documents/${file.filename}`;
@@ -963,8 +994,32 @@ export class PurchaseOrderService {
     });
   }
 
-  async cancel(id: string) {
-    const po = await this.findOne(id);
+  async streamDocument(id: string, user: JwtPayload, res: Response) {
+    const po = await this.prisma.purchaseOrder.findUnique({
+      where: { id },
+      select: { id: true, branchId: true, documentUrl: true },
+    });
+
+    if (!po) {
+      throw new NotFoundException(`Purchase Order "${id}" not found.`);
+    }
+
+    await this.branchScopeService.validateBranchAccess(user, po.branchId);
+
+    if (!po.documentUrl) {
+      throw new NotFoundException('No document attached to this purchase order.');
+    }
+
+    const resolved = resolvePrivateFilePath('purchase-documents', po.documentUrl);
+    if (!resolved) {
+      throw new NotFoundException('Document file not found on disk.');
+    }
+
+    streamLocalFile(resolved, res);
+  }
+
+  async cancel(id: string, user?: JwtPayload) {
+    const po = await this.findOne(id, user);
 
     if (
       po.status !== PurchaseOrderStatus.DRAFT &&
@@ -1003,6 +1058,47 @@ export class PurchaseOrderService {
           branch: true,
         },
       });
+    });
+  }
+
+  async remove(id: string, user: JwtPayload) {
+    const po = await this.findOne(id, user);
+
+    if (po.status !== PurchaseOrderStatus.DRAFT) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        message: `Cannot delete purchase order "${po.poNumber}" with status "${po.status}". Only DRAFT purchase orders can be deleted. Please cancel or return items instead.`,
+        canDeactivate: false,
+      });
+    }
+
+    if (po.payments && po.payments.length > 0) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        message: `Cannot delete purchase order "${po.poNumber}" because it has ${po.payments.length} linked supplier payment(s).`,
+        canDeactivate: false,
+      });
+    }
+
+    const hasReceivedItems = po.items.some((i: any) => i.quantityReceived > 0);
+    if (hasReceivedItems) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        message: `Cannot delete purchase order "${po.poNumber}" because items have already been received into stock.`,
+        canDeactivate: false,
+      });
+    }
+
+    if (po.documentUrl) {
+      await storageService.safeUnlink(po.documentUrl);
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      await tx.purchaseOrderItem.deleteMany({ where: { purchaseOrderId: id } });
+      return tx.purchaseOrder.delete({ where: { id } });
     });
   }
 }

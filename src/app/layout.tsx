@@ -16,9 +16,35 @@ const geistMono = localFont({
   weight: "100 900",
 });
 
+const rawSiteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://mobilehubbd.tech";
+const siteUrl = rawSiteUrl.startsWith("http") ? rawSiteUrl : `https://${rawSiteUrl}`;
+
 export const metadata: Metadata = {
-  title: "MobileHubBD - Online Mobile Parts & Accessories Store",
-  description: "E-commerce and business management platform for mobile spare parts and accessories - mobilehubbd",
+  metadataBase: new URL(siteUrl),
+  title: {
+    default: "MobileHubBD - Premium Smartphone Parts & Repair Services",
+    template: "%s | MobileHubBD",
+  },
+  description:
+    "Bangladesh's leading platform for genuine smartphone displays, batteries, accessories, and professional repair services - MobileHubBD",
+  alternates: {
+    canonical: "/",
+  },
+  openGraph: {
+    type: "website",
+    locale: "en_US",
+    url: siteUrl,
+    siteName: "MobileHubBD",
+    title: "MobileHubBD - Premium Smartphone Parts & Repair Services",
+    description:
+      "Bangladesh's leading platform for genuine smartphone displays, batteries, accessories, and professional repair services.",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "MobileHubBD - Premium Smartphone Parts & Repair Services",
+    description:
+      "Bangladesh's leading platform for genuine smartphone displays, batteries, accessories, and professional repair services.",
+  },
 };
 
 import { API_BASE_URL } from "@/lib/api-client";
@@ -34,9 +60,10 @@ export default function RootLayout({
   }
 
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        suppressHydrationWarning
       >
         <AuthProvider>
           <CartProvider>

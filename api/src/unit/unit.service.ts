@@ -96,7 +96,7 @@ export class UnitService {
     const unit = await this.prisma.unit.findUnique({
       where: { id },
       include: {
-        products: { take: 1 },
+        _count: { select: { products: true } },
       },
     });
 
@@ -104,10 +104,14 @@ export class UnitService {
       throw new NotFoundException(`Unit with ID "${id}" not found`);
     }
 
-    if (unit.products.length > 0) {
-      throw new ConflictException(
-        `Cannot delete unit "${unit.name}" because it is linked to products.`,
-      );
+    if (unit._count.products > 0) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        message: `Cannot delete unit "${unit.name}". It is linked to ${unit._count.products} product(s). Please reassign or delete them first, or deactivate the unit.`,
+        canDeactivate: true,
+        blockers: { products: unit._count.products },
+      });
     }
 
     return this.prisma.unit.delete({

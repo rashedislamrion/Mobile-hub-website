@@ -176,13 +176,23 @@ export default function CreateStockAdjustmentPage() {
         }
       }
 
-      // Product search (name, slug, or SKU)
+      // Product search (token matching across name, code, slug, brand, variant SKU/spec)
       if (productSearch.trim()) {
-        const query = productSearch.toLowerCase().trim();
-        const matchesName = p.name.toLowerCase().includes(query);
-        const matchesSlug = p.slug?.toLowerCase().includes(query);
-        const matchesSku = p.variants?.some((v) => v.sku.toLowerCase().includes(query));
-        if (!matchesName && !matchesSlug && !matchesSku) return false;
+        const tokens = productSearch.toLowerCase().trim().split(/\s+/).filter(Boolean);
+        const matchesAllTokens = tokens.every((tok) => {
+          const inName = p.name.toLowerCase().includes(tok);
+          const inCode = ((p as any).code || "").toLowerCase().includes(tok);
+          const inSlug = (p.slug || "").toLowerCase().includes(tok);
+          const inBrand = (p.brand?.name || "").toLowerCase().includes(tok);
+          const inVariants = (p.variants || []).some(
+            (v) =>
+              (v.sku || "").toLowerCase().includes(tok) ||
+              (v.color || "").toLowerCase().includes(tok) ||
+              (v.quality || "").toLowerCase().includes(tok)
+          );
+          return inName || inCode || inSlug || inBrand || inVariants;
+        });
+        if (!matchesAllTokens) return false;
       }
 
       // Brand search

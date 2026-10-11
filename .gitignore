@@ -55,8 +55,22 @@ api/uploads/*
 **/uploads/*
 !**/uploads/.gitkeep
 
-# temp & scratch
+# temp, scratch & dumps
 scratch/
 .system_generated/
 *.dump
+local_db_backup_*
+*.sql
+!api/prisma/migrations/**/*.sql
 
+# root screenshots and stray images
+/*.png
+/*.jpg
+/*.jpeg
+WhatsApp Image*
+Screenshot*
+
+# private uploads
+private-uploads/
+api/private-uploads/
+**/private-uploads/

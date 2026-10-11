@@ -171,15 +171,22 @@ export class RoleService {
   async remove(id: string) {
     const role = await this.findOne(id);
     if (role.isSystem) {
-      throw new BadRequestException('System roles cannot be deleted.');
+      throw new ConflictException('System roles cannot be deleted.');
     }
     if (role._count.staff > 0) {
-      throw new ConflictException(
-        `Cannot delete role "${role.name}" because ${role._count.staff} employee(s) are assigned to it.`,
-      );
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        message: `Cannot delete role "${role.name}". It has ${role._count.staff} assigned employee(s). Please reassign them before deleting.`,
+        blockers: { staff: role._count.staff },
+      });
     }
 
-    return this.prisma.role.delete({ where: { id } });
+    return this.prisma.$transaction(async (tx) => {
+      await tx.rolePermission.deleteMany({ where: { roleId: id } });
+      await tx.roleBranchPermission.deleteMany({ where: { roleId: id } });
+      return tx.role.delete({ where: { id } });
+    });
   }
 
   async getRoleBranchPermissions(roleId: string) {

@@ -4,12 +4,15 @@ import {
   Post,
   Body,
   Patch,
+  Delete,
   Param,
   Query,
   UseGuards,
   UseInterceptors,
   UploadedFile,
+  Res,
 } from '@nestjs/common';
+import { Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { PurchaseOrderService } from './purchase-order.service';
 import {
@@ -40,6 +43,7 @@ export class PurchaseOrderController {
     action: PermissionAction.READ,
   })
   findAll(
+    @CurrentUser() user: JwtPayload,
     @Query('branch') branch?: string,
     @Query('supplier') supplier?: string,
     @Query('status') status?: PurchaseOrderStatus,
@@ -50,17 +54,33 @@ export class PurchaseOrderController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    return this.purchaseOrderService.findAll({
-      branch,
-      supplier,
-      status,
-      paymentStatus,
-      dateFrom,
-      dateTo,
-      search,
-      page: page ? parseInt(page, 10) : undefined,
-      limit: limit ? parseInt(limit, 10) : undefined,
-    });
+    return this.purchaseOrderService.findAll(
+      {
+        branch,
+        supplier,
+        status,
+        paymentStatus,
+        dateFrom,
+        dateTo,
+        search,
+        page: page ? parseInt(page, 10) : undefined,
+        limit: limit ? parseInt(limit, 10) : undefined,
+      },
+      user,
+    );
+  }
+
+  @Get(':id/document')
+  @RequirePermission({
+    module: ModuleName.PURCHASE,
+    action: PermissionAction.READ,
+  })
+  streamDocument(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+    @Res() res: any,
+  ) {
+    return this.purchaseOrderService.streamDocument(id, user, res);
   }
 
   @Get(':id')
@@ -68,8 +88,8 @@ export class PurchaseOrderController {
     module: ModuleName.PURCHASE,
     action: PermissionAction.READ,
   })
-  findOne(@Param('id') id: string) {
-    return this.purchaseOrderService.findOne(id);
+  findOne(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.purchaseOrderService.findOne(id, user);
   }
 
   @Post()
@@ -77,8 +97,11 @@ export class PurchaseOrderController {
     module: ModuleName.PURCHASE,
     action: PermissionAction.CREATE,
   })
-  create(@Body() dto: CreatePurchaseOrderDto, @CurrentUser() user: JwtPayload) {
-    return this.purchaseOrderService.create(dto, user.sub);
+  create(
+    @Body() dto: CreatePurchaseOrderDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.purchaseOrderService.create(dto, user);
   }
 
   @Post(':id/document')
@@ -92,8 +115,9 @@ export class PurchaseOrderController {
   uploadDocument(
     @Param('id') id: string,
     @UploadedFile() file: Express.Multer.File,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.purchaseOrderService.attachDocument(id, file);
+    return this.purchaseOrderService.attachDocument(id, file, user);
   }
 
   @Patch(':id/receive')
@@ -101,8 +125,12 @@ export class PurchaseOrderController {
     module: ModuleName.PURCHASE,
     action: PermissionAction.UPDATE,
   })
-  receiveItems(@Param('id') id: string, @Body() dto: ReceivePurchaseOrderDto) {
-    return this.purchaseOrderService.receiveItems(id, dto);
+  receiveItems(
+    @Param('id') id: string,
+    @Body() dto: ReceivePurchaseOrderDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.purchaseOrderService.receiveItems(id, dto, user);
   }
 
   @Post(':id/return')
@@ -115,7 +143,7 @@ export class PurchaseOrderController {
     @Body() dto: ReturnPurchaseOrderDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.purchaseOrderService.returnItems(id, dto, user.sub);
+    return this.purchaseOrderService.returnItems(id, dto, user);
   }
 
   @Patch(':id/complete')
@@ -123,8 +151,11 @@ export class PurchaseOrderController {
     module: ModuleName.PURCHASE,
     action: PermissionAction.UPDATE,
   })
-  completePurchase(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    return this.purchaseOrderService.complete(id, user.sub);
+  completePurchase(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.purchaseOrderService.complete(id, user);
   }
 
   @Patch(':id/cancel')
@@ -132,7 +163,16 @@ export class PurchaseOrderController {
     module: ModuleName.PURCHASE,
     action: PermissionAction.UPDATE,
   })
-  cancel(@Param('id') id: string) {
-    return this.purchaseOrderService.cancel(id);
+  cancel(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.purchaseOrderService.cancel(id, user);
+  }
+
+  @Delete(':id')
+  @RequirePermission({
+    module: ModuleName.PURCHASE,
+    action: PermissionAction.DELETE,
+  })
+  remove(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.purchaseOrderService.remove(id, user);
   }
 }

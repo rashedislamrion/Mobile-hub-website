@@ -30,6 +30,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { AdminTableState } from "@/components/admin/AdminTableState";
 
 interface BrandOption {
   id: string;
@@ -57,6 +58,7 @@ export default function SeriesPage() {
   const [seriesList, setSeriesList] = useState<SeriesItem[]>([]);
   const [brands, setBrands] = useState<BrandOption[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedBrandFilter, setSelectedBrandFilter] = useState("ALL");
 
@@ -77,6 +79,7 @@ export default function SeriesPage() {
   // Load Data
   const fetchData = useCallback(async () => {
     setIsLoading(true);
+    setError(null);
     try {
       const [seriesRes, brandsRes] = await Promise.all([
         apiGet<SeriesItem[]>("/series"),
@@ -85,6 +88,7 @@ export default function SeriesPage() {
       setSeriesList(Array.isArray(seriesRes) ? seriesRes : []);
       setBrands(Array.isArray(brandsRes) ? brandsRes : []);
     } catch (err: any) {
+      setError(err.message || "Failed to load series catalog");
       toast.error(err.message || "Failed to load series catalog");
     } finally {
       setIsLoading(false);
@@ -269,29 +273,19 @@ export default function SeriesPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {isLoading ? (
-                <tr>
-                  <td colSpan={5} className="py-16 text-center text-slate-400">
-                    <div className="flex flex-col items-center justify-center gap-2">
-                      <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
-                      <span>Loading series records...</span>
-                    </div>
-                  </td>
-                </tr>
-              ) : filteredSeries.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="py-16 text-center text-slate-400">
-                    <div className="flex flex-col items-center justify-center gap-1">
-                      <Layers className="w-8 h-8 text-slate-300 mb-1" />
-                      <p className="font-semibold text-slate-600">No series found</p>
-                      <p className="text-xs text-slate-400">
-                        Try modifying your search or create a new series.
-                      </p>
-                    </div>
-                  </td>
-                </tr>
-              ) : (
-                filteredSeries.map((series, idx) => (
+              <AdminTableState
+                isLoading={isLoading}
+                error={error}
+                isEmpty={filteredSeries.length === 0}
+                onRetry={fetchData}
+                colSpan={5}
+                loadingRows={5}
+                emptyTitle="No series found"
+                emptyDescription="Try modifying your search or create a new series."
+                emptyActionLabel="Create Series"
+                onEmptyAction={handleOpenCreate}
+              >
+                {filteredSeries.map((series, idx) => (
                   <tr
                     key={series.id}
                     className="hover:bg-slate-50/70 transition-colors duration-150"
@@ -351,8 +345,8 @@ export default function SeriesPage() {
                       </div>
                     </td>
                   </tr>
-                ))
-              )}
+                ))}
+              </AdminTableState>
             </tbody>
           </table>
         </div>

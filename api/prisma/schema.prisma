@@ -556,6 +556,7 @@ model Branch {
   phoneUnits        PhoneUnit[]
   requestingProductRequests ProductRequest[] @relation("RequestingBranchRequests")
   fulfillingProductRequests ProductRequest[] @relation("FulfillingBranchRequests")
+  serviceJobs       ServiceJob[]
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
 }
@@ -937,6 +938,8 @@ model ServiceJob {
   invoiceNo             String?              @unique
   orderId               String?              @unique
   order                 Order?               @relation(fields: [orderId], references: [id])
+  branchId              String?
+  branch                Branch?              @relation(fields: [branchId], references: [id])
   customerId            String?
   customer              Customer?            @relation(fields: [customerId], references: [id])
   customerName          String?
@@ -977,6 +980,7 @@ model ServiceJob {
   @@index([technicianId])
   @@index([status])
   @@index([technicianId, status])
+  @@index([branchId])
 }
 
 model DeviceType {

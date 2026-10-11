@@ -1,4 +1,4 @@
-export interface JwtPayload {
+export class JwtPayload {
   sub: string; // userId (Staff.id or Customer.id)
   userType: 'STAFF' | 'CUSTOMER';
   roleId?: string; // only for STAFF (Customers have no role/permissions)

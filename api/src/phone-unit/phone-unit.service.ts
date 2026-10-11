@@ -7,10 +7,15 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreatePhoneUnitDto } from './dto/phone-unit.dto';
 import { PhoneUnitStatus, Prisma } from '@prisma/client';
+import { BranchScopeService } from '../common/branch/branch-scope.service';
+import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 
 @Injectable()
 export class PhoneUnitService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private branchScopeService: BranchScopeService,
+  ) {}
 
   async checkImei(imei: string) {
     if (!imei || !imei.trim()) {
@@ -52,13 +57,22 @@ export class PhoneUnitService {
     };
   }
 
-  async getAvailableUnits(variantId: string, branchId?: string) {
+  async getAvailableUnits(
+    variantId: string,
+    branchId?: string,
+    user?: JwtPayload,
+  ) {
     const where: Prisma.PhoneUnitWhereInput = {
       productVariantId: variantId,
       status: PhoneUnitStatus.IN_STOCK,
     };
-    if (branchId) {
-      where.branchId = branchId;
+
+    const branchFilter = await this.branchScopeService.getBranchFilter(
+      user,
+      branchId,
+    );
+    if (branchFilter !== undefined) {
+      where.branchId = branchFilter;
     }
 
     return this.prisma.phoneUnit.findMany({
@@ -83,20 +97,31 @@ export class PhoneUnitService {
     });
   }
 
-  async findAll(query: {
-    branchId?: string;
-    status?: PhoneUnitStatus;
-    variantId?: string;
-    search?: string;
-    page?: number;
-    limit?: number;
-  }) {
+  async findAll(
+    query: {
+      branchId?: string;
+      status?: PhoneUnitStatus;
+      variantId?: string;
+      search?: string;
+      page?: number;
+      limit?: number;
+    },
+    user?: JwtPayload,
+  ) {
     const page = Math.max(1, Number(query.page) || 1);
     const limit = Math.max(1, Math.min(100, Number(query.limit) || 20));
     const skip = (page - 1) * limit;
 
     const where: Prisma.PhoneUnitWhereInput = {};
-    if (query.branchId) where.branchId = query.branchId;
+
+    const branchFilter = await this.branchScopeService.getBranchFilter(
+      user,
+      query.branchId,
+    );
+    if (branchFilter !== undefined) {
+      where.branchId = branchFilter;
+    }
+
     if (query.status) where.status = query.status;
     if (query.variantId) where.productVariantId = query.variantId;
 
@@ -151,7 +176,7 @@ export class PhoneUnitService {
     };
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, user?: JwtPayload) {
     const unit = await this.prisma.phoneUnit.findUnique({
       where: { id },
       include: {
@@ -168,10 +193,20 @@ export class PhoneUnitService {
     if (!unit) {
       throw new NotFoundException(`Phone unit with ID "${id}" not found.`);
     }
+
+    if (user) {
+      await this.branchScopeService.validateBranchAccess(user, unit.branchId);
+    }
+
     return unit;
   }
 
-  async create(dto: CreatePhoneUnitDto) {
+  async create(dto: CreatePhoneUnitDto, user?: JwtPayload) {
+    const branchId = await this.branchScopeService.determineCreateBranchId(
+      user,
+      dto.branchId,
+    );
+
     const imei1Check = await this.checkImei(dto.imei1);
     if (imei1Check.exists) {
       throw new ConflictException(
@@ -191,7 +226,7 @@ export class PhoneUnitService {
     return this.prisma.phoneUnit.create({
       data: {
         productVariantId: dto.productVariantId,
-        branchId: dto.branchId,
+        branchId,
         imei1: dto.imei1.trim(),
         imei2: dto.imei2?.trim() || null,
         serialNumber: dto.serialNumber?.trim() || null,

@@ -6,6 +6,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateBlogDto, UpdateBlogDto } from './dto/blog.dto';
 import { ContentStatus, Prisma } from '@prisma/client';
+import { storageService } from '../common/upload/storage.service';
 
 function slugify(text: string): string {
   return text
@@ -266,7 +267,10 @@ export class BlogService {
   }
 
   async remove(id: string) {
-    await this.findOne(id);
+    const blog = await this.findOne(id);
+    if (blog.featuredImage) {
+      await storageService.safeUnlink(blog.featuredImage);
+    }
     return this.prisma.blog.delete({ where: { id } });
   }
 }

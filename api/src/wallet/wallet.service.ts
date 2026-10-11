@@ -129,14 +129,23 @@ export class WalletService {
       );
     }
 
-    if (
-      wallet._count.transactions > 0 ||
-      wallet._count.expenses > 0 ||
-      wallet._count.supplierPayments > 0
-    ) {
-      throw new ConflictException(
-        `Cannot delete wallet "${wallet.name}" because it has associated transaction history. Please mark it as Inactive instead.`,
-      );
+    const blockers: string[] = [];
+    if (wallet._count.transactions > 0) blockers.push(`${wallet._count.transactions} transaction(s)`);
+    if (wallet._count.expenses > 0) blockers.push(`${wallet._count.expenses} expense(s)`);
+    if (wallet._count.supplierPayments > 0) blockers.push(`${wallet._count.supplierPayments} supplier payment(s)`);
+
+    if (blockers.length > 0) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        message: `Cannot delete wallet "${wallet.name}". It has ${blockers.join(', ')}. Please mark it as Inactive instead.`,
+        canDeactivate: true,
+        blockers: {
+          transactions: wallet._count.transactions,
+          expenses: wallet._count.expenses,
+          supplierPayments: wallet._count.supplierPayments,
+        },
+      });
     }
 
     return this.prisma.walletType.delete({ where: { id } });

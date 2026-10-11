@@ -10,7 +10,11 @@ import {
   UseGuards,
   UseInterceptors,
   UploadedFiles,
+  Res,
 } from '@nestjs/common';
+import { Response } from 'express';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import { EmployeeService } from './employee.service';
 import {
   CreateEmployeeDto,
@@ -48,6 +52,7 @@ export class EmployeeController {
   @Get()
   @RequirePermission({ module: ModuleName.HRM, action: PermissionAction.READ })
   findAll(
+    @CurrentUser() user: JwtPayload,
     @Query('department') department?: string,
     @Query('role') role?: string,
     @Query('branch') branch?: string,
@@ -56,21 +61,34 @@ export class EmployeeController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    return this.employeeService.findAll({
-      department,
-      role,
-      branch,
-      status,
-      search,
-      page: page ? parseInt(page, 10) : undefined,
-      limit: limit ? parseInt(limit, 10) : undefined,
-    });
+    return this.employeeService.findAll(
+      {
+        department,
+        role,
+        branch,
+        status,
+        search,
+        page: page ? parseInt(page, 10) : undefined,
+        limit: limit ? parseInt(limit, 10) : undefined,
+      },
+      user,
+    );
+  }
+
+  @Get(':id/document/:field')
+  async getEmployeeDocument(
+    @Param('id') id: string,
+    @Param('field') field: string,
+    @CurrentUser() user: JwtPayload,
+    @Res() res: any,
+  ) {
+    return this.employeeService.streamEmployeeDocument(id, field, user, res);
   }
 
   @Get(':id')
   @RequirePermission({ module: ModuleName.HRM, action: PermissionAction.READ })
-  findOne(@Param('id') id: string) {
-    return this.employeeService.findOne(id);
+  findOne(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.employeeService.findOne(id, user);
   }
 
   @Post()
@@ -89,6 +107,7 @@ export class EmployeeController {
   )
   async create(
     @Body() createEmployeeDto: CreateEmployeeDto,
+    @CurrentUser() user: JwtPayload,
     @UploadedFiles()
     files?: {
       profilePhoto?: Express.Multer.File[];
@@ -107,7 +126,7 @@ export class EmployeeController {
           'staff-documents',
         )) || `/uploads/staff-documents/${files.birthCertificate[0].filename}`;
     }
-    return this.employeeService.create(createEmployeeDto);
+    return this.employeeService.create(createEmployeeDto, user);
   }
 
   @Patch(':id')

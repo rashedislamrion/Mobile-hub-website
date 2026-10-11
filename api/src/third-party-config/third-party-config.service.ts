@@ -8,6 +8,7 @@ import {
   UpdateSmsConfigDto,
 } from './dto/third-party-config.dto';
 import { PaymentGatewayName } from '@prisma/client';
+import { OFFICIAL_CONTACT } from '../common/constants/contact';
 
 function maskString(val?: string | null): string {
   if (!val) return '';
@@ -279,8 +280,8 @@ export class ThirdPartyConfigService {
           username: '',
           password: '',
           encryption: 'tls',
-          fromName: 'MobileHubBD',
-          fromEmail: 'mobilehubbd2@gmail.com',
+          fromName: OFFICIAL_CONTACT.storeName,
+          fromEmail: OFFICIAL_CONTACT.email,
         },
       });
     }
@@ -328,8 +329,8 @@ export class ThirdPartyConfigService {
         username: dto.username || null,
         password,
         encryption: dto.encryption || 'tls',
-        fromName: dto.fromName || 'MobileHubBD',
-        fromEmail: dto.fromEmail || 'mobilehubbd2@gmail.com',
+        fromName: dto.fromName || OFFICIAL_CONTACT.storeName,
+        fromEmail: dto.fromEmail || OFFICIAL_CONTACT.email,
       },
     });
   }

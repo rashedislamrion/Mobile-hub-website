@@ -1,19 +1,26 @@
 "use client";
 
-import { ReactNode, useEffect } from "react";
+import { ReactNode, useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { AdminSidebar } from "@/components/admin/AdminSidebar";
 import { AdminTopbar } from "@/components/admin/AdminTopbar";
 import { AdminPageProvider } from "@/contexts/AdminPageContext";
 import { StaffAuthProvider, useStaffAuth } from "@/context/AuthContext";
-import { ShieldCheck, Loader2 } from "lucide-react";
+import { StaffIdleTimeoutModal } from "@/components/admin/StaffIdleTimeoutModal";
+import { ShieldCheck, Loader2, AlertTriangle, RotateCw, ArrowLeft } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 function AdminContentWrapper({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { user, isLoading, isAuthenticated } = useStaffAuth();
+  const { user, isLoading, isAuthenticated, authError, retryVerification } = useStaffAuth();
+  const [mounted, setMounted] = useState(false);
   const isLoginPage = pathname === "/admin/login";
   const isPrintPage = pathname?.startsWith("/admin/pos/invoice-print");
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Role-based route redirection for Technician and Branch Admin
   useEffect(() => {
@@ -53,8 +60,44 @@ function AdminContentWrapper({ children }: { children: ReactNode }) {
     return <>{children}</>;
   }
 
-  // If still verifying staff session, show clean isolated loader (NO dashboard chrome)
-  if (isLoading) {
+  // If auth verification failed with timeout or network error, show clear error state with retry and login options
+  if (authError) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center text-white p-6 space-y-6">
+        <div className="p-4 bg-amber-500/20 text-amber-400 rounded-2xl">
+          <AlertTriangle className="w-12 h-12" />
+        </div>
+        <div className="text-center max-w-md space-y-2">
+          <h2 className="text-xl font-bold tracking-tight">Authentication Verification Failed</h2>
+          <p className="text-slate-400 text-sm leading-relaxed">{authError}</p>
+        </div>
+        <div className="flex flex-col sm:flex-row items-center gap-3">
+          <Button
+            onClick={() => retryVerification?.()}
+            className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-500 text-white font-semibold px-6 py-2.5 rounded-xl flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+          >
+            <RotateCw className="w-4 h-4" />
+            Retry
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => {
+              if (typeof window !== "undefined") {
+                router.replace("/admin/login");
+              }
+            }}
+            className="w-full sm:w-auto border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white px-6 py-2.5 rounded-xl flex items-center justify-center gap-2 cursor-pointer"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Back to login
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // If still mounting or verifying staff session, show clean isolated loader (identical on SSR & initial hydration)
+  if (!mounted || isLoading) {
     return (
       <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center text-white space-y-4">
         <div className="p-3 bg-emerald-500/20 text-emerald-400 rounded-2xl animate-pulse">
@@ -86,6 +129,7 @@ function AdminContentWrapper({ children }: { children: ReactNode }) {
   // Authenticated staff user: render full ERP shell
   return (
     <AdminPageProvider>
+      <StaffIdleTimeoutModal />
       <div className="flex h-screen bg-slate-50 overflow-hidden font-sans">
         {/* Desktop Sidebar */}
         <div className="hidden lg:block h-full">

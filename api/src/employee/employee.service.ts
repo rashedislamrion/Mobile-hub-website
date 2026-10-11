@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -14,6 +15,14 @@ import {
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { Prisma, StaffStatus } from '@prisma/client';
+import { Response } from 'express';
+import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
+import { BranchScopeService } from '../common/branch/branch-scope.service';
+import { storageService } from '../common/upload/storage.service';
+import {
+  resolvePrivateFilePath,
+  streamLocalFile,
+} from '../common/upload/private-file.helper';
 
 export const STAFF_SELECT_SAFE = {
   id: true,
@@ -63,7 +72,10 @@ export const STAFF_SELECT_SAFE = {
 
 @Injectable()
 export class EmployeeService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private branchScopeService: BranchScopeService,
+  ) {}
 
   private async generateNextEmployeeId(): Promise<string> {
     const lastStaff = await this.prisma.staff.findFirst({
@@ -93,32 +105,46 @@ export class EmployeeService {
     };
   }
 
-  async findAll(query?: {
-    department?: string;
-    role?: string;
-    branch?: string;
-    status?: StaffStatus;
-    search?: string;
-    page?: number;
-    limit?: number;
-  }) {
+  async findAll(
+    query?: {
+      department?: string;
+      role?: string;
+      branch?: string;
+      status?: StaffStatus;
+      search?: string;
+      page?: number;
+      limit?: number;
+    },
+    user?: JwtPayload,
+  ) {
     const page = Math.max(1, Number(query?.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(query?.limit) || 20));
     const skip = (page - 1) * limit;
 
     const where: Prisma.StaffWhereInput = {};
 
+    // Branch scoping
+    const branchFilter = await this.branchScopeService.getBranchFilter(
+      user,
+      query?.branch,
+    );
+    if (branchFilter !== undefined) {
+      where.OR = [
+        { branchId: branchFilter },
+        { branchAccess: { some: { branchId: branchFilter } } },
+      ];
+    } else if (query?.branch) {
+      where.OR = [
+        { branchId: query.branch },
+        { branchAccess: { some: { branchId: query.branch } } },
+      ];
+    }
+
     if (query?.department) where.departmentId = query.department;
     if (query?.role) {
       where.OR = [
         { roleId: query.role },
         { role: { name: { equals: query.role, mode: 'insensitive' } } },
-      ];
-    }
-    if (query?.branch) {
-      where.OR = [
-        { branchId: query.branch },
-        { branchAccess: { some: { branchId: query.branch } } },
       ];
     }
     if (query?.status) where.status = query.status;
@@ -157,7 +183,7 @@ export class EmployeeService {
     };
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, user?: JwtPayload) {
     const staff = await this.prisma.staff.findUnique({
       where: { id },
       select: {
@@ -172,10 +198,67 @@ export class EmployeeService {
 
     if (!staff)
       throw new NotFoundException(`Employee with ID "${id}" not found.`);
+
+    if (user && user.sub !== id) {
+      await this.branchScopeService.validateBranchAccess(user, staff.branchId);
+    }
+
     return this.mapStaffAccess(staff);
   }
 
-  async create(dto: CreateEmployeeDto) {
+  async streamEmployeeDocument(
+    id: string,
+    field: string,
+    user: JwtPayload,
+    res: Response,
+  ) {
+    const staff = await this.prisma.staff.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        branchId: true,
+        photo: true,
+        birthCertificateUrl: true,
+      },
+    });
+
+    if (!staff) {
+      throw new NotFoundException('Employee not found.');
+    }
+
+    if (user.sub !== id) {
+      await this.branchScopeService.validateBranchAccess(user, staff.branchId);
+    }
+
+    let filePathOrUrl: string | null = null;
+    const norm = field.toLowerCase();
+    if (norm === 'photo' || norm === 'profilephoto') {
+      filePathOrUrl = staff.photo;
+    } else if (
+      norm === 'birthcertificate' ||
+      norm === 'birthcertificateurl' ||
+      norm === 'nid'
+    ) {
+      filePathOrUrl = staff.birthCertificateUrl;
+    } else {
+      throw new BadRequestException(
+        `Invalid document field "${field}". Allowed: photo, birthCertificate.`,
+      );
+    }
+
+    if (!filePathOrUrl) {
+      throw new NotFoundException(`No document attached for field "${field}".`);
+    }
+
+    const resolved = resolvePrivateFilePath('staff-documents', filePathOrUrl);
+    if (!resolved) {
+      throw new NotFoundException('Document file not found on disk.');
+    }
+
+    streamLocalFile(resolved, res);
+  }
+
+  async create(dto: CreateEmployeeDto, user?: JwtPayload) {
     const rawPassword =
       dto.password || crypto.randomBytes(8).toString('hex') + '!Aa1';
     const passwordHash = await bcrypt.hash(rawPassword, 10);
@@ -183,10 +266,27 @@ export class EmployeeService {
 
     const branchIds =
       dto.branchIds && dto.branchIds.length > 0
-        ? dto.branchIds
+        ? [...dto.branchIds]
         : dto.branchId
           ? [dto.branchId]
           : [];
+
+    if (user) {
+      const scope = await this.branchScopeService.resolveScope(user);
+      if (!scope.isGlobal) {
+        if (branchIds.length === 0 && scope.allowedBranchIds.length === 1) {
+          branchIds.push(scope.allowedBranchIds[0]);
+        }
+        for (const bid of branchIds) {
+          if (!scope.allowedBranchIds.includes(bid)) {
+            throw new ForbiddenException(
+              `You cannot assign an employee to branch "${bid}" without branch access.`,
+            );
+          }
+        }
+      }
+    }
+
     const primaryBranchId =
       branchIds.length > 0 ? branchIds[0] : dto.branchId || null;
 
@@ -417,35 +517,101 @@ export class EmployeeService {
       include: {
         managedBranches: { select: { id: true, name: true } },
         headOfDepartments: { select: { id: true, name: true } },
-        Order: { select: { id: true }, take: 1 },
-        ServiceJob: { select: { id: true }, take: 1 },
+        _count: {
+          select: {
+            Order: true,
+            ServiceJob: true,
+            Payroll: true,
+            Expense: true,
+            StockAdjustment: true,
+            WastedProduct: true,
+            SupplierPayment: true,
+            recordedWalletTransactions: true,
+          },
+        },
       },
     });
 
     if (!staff)
       throw new NotFoundException(`Employee with ID "${id}" not found.`);
 
+    const blockers: string[] = [];
+    const blockerCounts: Record<string, any> = {};
+
     if (staff.managedBranches.length > 0) {
-      throw new ConflictException(
-        `Cannot delete ${staff.name} because they are assigned as Branch Manager for "${staff.managedBranches[0].name}". Please reassign the branch manager first.`,
+      blockers.push(
+        `assigned as Branch Manager for "${staff.managedBranches[0].name}"`,
       );
+      blockerCounts.managedBranches = staff.managedBranches.length;
     }
 
     if (staff.headOfDepartments.length > 0) {
-      throw new ConflictException(
-        `Cannot delete ${staff.name} because they are Department Head of "${staff.headOfDepartments[0].name}". Please reassign the department head first.`,
+      blockers.push(
+        `Department Head of "${staff.headOfDepartments[0].name}"`,
       );
+      blockerCounts.headOfDepartments = staff.headOfDepartments.length;
     }
 
-    if (staff.Order.length > 0 || staff.ServiceJob.length > 0) {
-      throw new ConflictException(
-        `Cannot delete ${staff.name} because they have historical Orders or Service Jobs attributed to them. Please mark them as Inactive instead.`,
-      );
+    if (staff._count.Order > 0) {
+      blockers.push(`${staff._count.Order} historical order(s)`);
+      blockerCounts.orders = staff._count.Order;
     }
 
-    return this.prisma.staff.delete({
-      where: { id },
-      select: { id: true, name: true, employeeId: true },
+    if (staff._count.ServiceJob > 0) {
+      blockers.push(`${staff._count.ServiceJob} service job(s)`);
+      blockerCounts.serviceJobs = staff._count.ServiceJob;
+    }
+
+    if (staff._count.Payroll > 0) {
+      blockers.push(`${staff._count.Payroll} payroll record(s)`);
+      blockerCounts.payrolls = staff._count.Payroll;
+    }
+
+    if (staff._count.Expense > 0) {
+      blockers.push(`${staff._count.Expense} expense record(s)`);
+      blockerCounts.expenses = staff._count.Expense;
+    }
+
+    if (staff._count.StockAdjustment > 0) {
+      blockers.push(`${staff._count.StockAdjustment} stock adjustment(s)`);
+      blockerCounts.stockAdjustments = staff._count.StockAdjustment;
+    }
+
+    if (staff._count.WastedProduct > 0) {
+      blockers.push(`${staff._count.WastedProduct} wasted product record(s)`);
+      blockerCounts.wastedProducts = staff._count.WastedProduct;
+    }
+
+    if (staff._count.SupplierPayment > 0) {
+      blockers.push(`${staff._count.SupplierPayment} supplier payment(s) recorded`);
+      blockerCounts.supplierPayments = staff._count.SupplierPayment;
+    }
+
+    if (blockers.length > 0) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        message: `Cannot delete employee "${staff.name}". Blockers: ${blockers.join(', ')}. Please mark them as INACTIVE, SUSPENDED, or TERMINATED instead.`,
+        canDeactivate: true,
+        blockers: blockerCounts,
+      });
+    }
+
+    // Safely remove employee uploads if hard deleted
+    if (staff.photo) {
+      await storageService.safeUnlink(staff.photo);
+    }
+    if (staff.birthCertificateUrl) {
+      await storageService.safeUnlink(staff.birthCertificateUrl);
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      await tx.staffBranchAccess.deleteMany({ where: { staffId: id } });
+      await tx.refreshToken.deleteMany({ where: { staffId: id } });
+      return tx.staff.delete({
+        where: { id },
+        select: { id: true, name: true, employeeId: true },
+      });
     });
   }
 

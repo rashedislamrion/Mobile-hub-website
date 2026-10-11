@@ -459,11 +459,51 @@ export class AuthService {
             include: { permissions: true },
           },
           branch: true,
+          branchAccess: {
+            include: { branch: true },
+          },
         },
       });
       if (staff) {
         delete (staff as any).passwordHash;
-        return { ...staff, userType: 'STAFF' };
+        const isGlobal = staff.role?.scope === 'GLOBAL';
+        let allowedBranches: Array<{ id: string; name: string; code?: string | null }> = [];
+        if (isGlobal) {
+          const allActive = await this.prisma.branch.findMany({
+            where: { status: 'ACTIVE' },
+            select: { id: true, name: true, code: true },
+            orderBy: { name: 'asc' },
+          });
+          allowedBranches = allActive;
+        } else {
+          const branchMap = new Map<string, { id: string; name: string; code?: string | null }>();
+          if (staff.branch && staff.branch.status === 'ACTIVE') {
+            branchMap.set(staff.branch.id, {
+              id: staff.branch.id,
+              name: staff.branch.name,
+              code: staff.branch.code,
+            });
+          }
+          if (staff.branchAccess) {
+            for (const ba of staff.branchAccess) {
+              if (ba.branch && ba.branch.status === 'ACTIVE') {
+                branchMap.set(ba.branch.id, {
+                  id: ba.branch.id,
+                  name: ba.branch.name,
+                  code: ba.branch.code,
+                });
+              }
+            }
+          }
+          allowedBranches = Array.from(branchMap.values());
+        }
+
+        return {
+          ...staff,
+          isGlobal,
+          allowedBranches,
+          userType: 'STAFF',
+        };
       }
       return null;
     } else {
@@ -493,9 +533,14 @@ export class AuthService {
       branchId,
     };
 
+    const accessExpiry =
+      userType === 'STAFF'
+        ? this.configService.get('STAFF_JWT_ACCESS_EXPIRY') || '8h'
+        : this.configService.get('JWT_ACCESS_EXPIRY') || '15m';
+
     const accessToken = this.jwtService.sign(payload, {
       secret: this.configService.get<string>('JWT_ACCESS_SECRET'),
-      expiresIn: this.configService.get('JWT_ACCESS_EXPIRY') || '15m',
+      expiresIn: accessExpiry,
     });
 
     const refreshToken = this.jwtService.sign(payload, {

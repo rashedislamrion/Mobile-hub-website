@@ -2,143 +2,125 @@
 
 import { useEffect, useState } from "react";
 import { useAdminPage } from "@/contexts/AdminPageContext";
-import { UploadCloud, DownloadCloud, AlertTriangle, FileSpreadsheet, FileText } from "lucide-react";
+import { DownloadCloud, FileText, Clock, AlertCircle, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { apiGet } from "@/lib/api-client";
+import { exportToCsv } from "@/lib/export-utils";
 
 export default function BulkImportExportPage() {
   const { setTitle, setBadge, setDateFilter } = useAdminPage();
-  const [isImporting, setIsImporting] = useState(false);
-  const [showPreview, setShowPreview] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [categories, setCategories] = useState<Array<{ id: string; name: string }>>([]);
+  const [brands, setBrands] = useState<Array<{ id: string; name: string }>>([]);
+
+  const [selectedCategory, setSelectedCategory] = useState("all");
+  const [selectedBrand, setSelectedBrand] = useState("all");
 
   useEffect(() => {
     setTitle("Bulk Import & Export");
-    setBadge("Website");
-    setDateFilter(""); 
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    setBadge("Products");
+    setDateFilter("");
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      setIsImporting(true);
-      setShowPreview(false);
-      
-      // Simulate file reading delay
-      setTimeout(() => {
-        setIsImporting(false);
-        setShowPreview(true);
-        toast.success("File parsed successfully. Please review below.");
-      }, 1500);
+    apiGet<any[]>("/categories")
+      .then((res) => {
+        if (Array.isArray(res)) setCategories(res);
+      })
+      .catch(() => {});
+
+    apiGet<any[]>("/brands")
+      .then((res) => {
+        if (Array.isArray(res)) setBrands(res);
+      })
+      .catch(() => {});
+  }, [setTitle, setBadge, setDateFilter]);
+
+  const handleExport = async () => {
+    try {
+      setIsExporting(true);
+      toast.info("Preparing product export...");
+
+      const params: Record<string, any> = { limit: 1000 };
+      if (selectedCategory !== "all") params.categoryId = selectedCategory;
+      if (selectedBrand !== "all") params.brandId = selectedBrand;
+
+      const res = await apiGet<any>("/products", params);
+      const items = Array.isArray(res) ? res : res?.items || res?.data || [];
+
+      if (!items || items.length === 0) {
+        toast.error("No products found matching the selected export filters.");
+        return;
+      }
+
+      const headers = [
+        "Product Name",
+        "Brand",
+        "Category",
+        "Model",
+        "Base Price",
+        "Stock",
+        "Status",
+        "Created At",
+      ];
+
+      const rows = items.map((p: any) => [
+        p.name || "",
+        p.brand?.name || "",
+        p.category?.name || "",
+        p.model || "",
+        p.basePrice || p.price || 0,
+        p.stock ?? p.totalStock ?? 0,
+        p.status || "ACTIVE",
+        p.createdAt ? new Date(p.createdAt).toISOString().split("T")[0] : "",
+      ]);
+
+      exportToCsv(`products_export_${new Date().toISOString().split("T")[0]}`, headers, rows);
+      toast.success(`Exported ${rows.length} products successfully.`);
+    } catch (err: any) {
+      toast.error(err.message || "Failed to export products.");
+    } finally {
+      setIsExporting(false);
     }
-  };
-
-  const handleConfirmImport = () => {
-    toast.success("Products imported successfully!");
-    setShowPreview(false);
-  };
-
-  const handleExport = (format: "csv" | "xlsx") => {
-    toast.success(`Exporting as ${format.toUpperCase()} started...`);
   };
 
   return (
     <div className="flex flex-col lg:flex-row gap-6">
-      
-      {/* LEFT COLUMN: Import Products */}
+      {/* LEFT COLUMN: Import Products (Honest Coming Soon state) */}
       <div className="w-full lg:w-1/2 space-y-6">
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
           <div className="p-5 border-b border-slate-100 flex items-center justify-between">
             <h3 className="font-semibold text-slate-800 flex items-center gap-2">
-              <UploadCloud className="w-5 h-5 text-slate-500" />
-              Import Products
+              <Clock className="w-5 h-5 text-amber-500" />
+              Import Products (Bulk CSV/Excel)
             </h3>
-            <button className="text-emerald-600 hover:underline text-sm font-medium transition-all">
-              Download Sample Template
-            </button>
+            <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+              Coming Soon
+            </span>
           </div>
-          
-          <div className="p-6">
-            <div className="border-2 border-dashed border-emerald-200 bg-emerald-50/50 rounded-xl p-10 text-center transition-colors relative cursor-pointer hover:bg-emerald-50">
-              <input type="file" accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" onChange={handleFileUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
-              <div className="flex flex-col items-center gap-3">
-                <div className="w-14 h-14 rounded-full bg-white shadow-sm border border-emerald-100 text-emerald-600 flex items-center justify-center">
-                  {isImporting ? (
-                    <div className="w-6 h-6 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin" />
-                  ) : (
-                    <FileSpreadsheet className="w-7 h-7" />
-                  )}
-                </div>
-                <div>
-                  <p className="font-semibold text-slate-700 text-lg">Click or drag CSV/Excel file here</p>
-                  <p className="text-sm text-slate-500 mt-1">Make sure it matches the sample template format</p>
-                </div>
-              </div>
+
+          <div className="p-8 text-center space-y-4">
+            <div className="w-16 h-16 mx-auto rounded-full bg-amber-50 border border-amber-100 flex items-center justify-center text-amber-600">
+              <AlertCircle className="w-8 h-8" />
             </div>
 
-            {showPreview && (
-              <div className="mt-6 space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                {/* Validation Errors Callout */}
-                <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-start gap-3">
-                  <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-                  <div>
-                    <h4 className="font-semibold text-amber-800 text-sm mb-1">Found 2 issues in 340 rows</h4>
-                    <ul className="text-sm text-amber-700 list-disc list-inside space-y-1">
-                      <li>Row 12: Missing SKU</li>
-                      <li>Row 45: Price must be a positive number</li>
-                    </ul>
-                  </div>
-                </div>
+            <div className="max-w-md mx-auto space-y-2">
+              <h4 className="text-base font-bold text-slate-800">
+                Bulk Import Feature is In Development
+              </h4>
+              <p className="text-sm text-slate-500 leading-relaxed">
+                Automated bulk ingestion and SKU validation are currently being prepared for a future release. For current catalog management, please create or update products through the Products module.
+              </p>
+            </div>
 
-                {/* Preview Table */}
-                <div className="border border-slate-200 rounded-lg overflow-hidden">
-                  <div className="bg-slate-50 px-4 py-2 border-b border-slate-200">
-                    <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Preview (First 3 Rows)</span>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm text-left whitespace-nowrap">
-                      <thead className="bg-slate-50 border-b border-slate-100 text-slate-500">
-                        <tr>
-                          <th className="px-4 py-2 font-medium">Name</th>
-                          <th className="px-4 py-2 font-medium">SKU</th>
-                          <th className="px-4 py-2 font-medium">Category</th>
-                          <th className="px-4 py-2 font-medium text-right">Price</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 text-slate-700">
-                        <tr>
-                          <td className="px-4 py-2">iPhone 13 Pro Max Display</td>
-                          <td className="px-4 py-2">IP13PM-DIS</td>
-                          <td className="px-4 py-2">Display</td>
-                          <td className="px-4 py-2 text-right">15500</td>
-                        </tr>
-                        <tr>
-                          <td className="px-4 py-2">Samsung S22 Battery</td>
-                          <td className="px-4 py-2">S22-BAT</td>
-                          <td className="px-4 py-2">Battery</td>
-                          <td className="px-4 py-2 text-right">4200</td>
-                        </tr>
-                        <tr>
-                          <td className="px-4 py-2">Poco X3 Pro Motherboard</td>
-                          <td className="px-4 py-2">POCOX3P-MB</td>
-                          <td className="px-4 py-2">Motherboard</td>
-                          <td className="px-4 py-2 text-right">12000</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                <div className="flex justify-end pt-2">
-                  <button onClick={handleConfirmImport} className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-lg transition-colors text-sm w-full sm:w-auto">
-                    Confirm & Import 340 Products
-                  </button>
-                </div>
+            <div className="pt-2">
+              <div className="inline-flex items-center gap-2 px-4 py-2 bg-slate-50 text-slate-600 rounded-lg text-xs font-medium border border-slate-200">
+                <span>Status: Backend parser & multi-variant transaction engine scheduled</span>
               </div>
-            )}
+            </div>
           </div>
         </div>
       </div>
 
-      {/* RIGHT COLUMN: Export Products */}
+      {/* RIGHT COLUMN: Real Export Products */}
       <div className="w-full lg:w-1/2">
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
           <div className="p-5 border-b border-slate-100">
@@ -147,50 +129,62 @@ export default function BulkImportExportPage() {
               Export Products
             </h3>
           </div>
-          
+
           <div className="p-6 space-y-5">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Select Category</label>
-              <select className="w-full h-10 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500">
+              <select
+                value={selectedCategory}
+                onChange={(e) => setSelectedCategory(e.target.value)}
+                className="w-full h-10 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+              >
                 <option value="all">All Categories</option>
-                <option value="display">Display</option>
-                <option value="battery">Battery</option>
-                <option value="charging-logic">Charging Logic</option>
-              </select>
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Select Brand</label>
-              <select className="w-full h-10 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500">
-                <option value="all">All Brands</option>
-                <option value="apple">Apple</option>
-                <option value="samsung">Samsung</option>
-                <option value="xiaomi">Xiaomi</option>
+                {categories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
               </select>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Stock Status</label>
-              <select className="w-full h-10 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500">
-                <option value="all">Any Status</option>
-                <option value="in-stock">In Stock</option>
-                <option value="low-stock">Low Stock</option>
-                <option value="out-of-stock">Out of Stock</option>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Select Brand</label>
+              <select
+                value={selectedBrand}
+                onChange={(e) => setSelectedBrand(e.target.value)}
+                className="w-full h-10 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+              >
+                <option value="all">All Brands</option>
+                {brands.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
               </select>
             </div>
 
             <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row gap-3">
-              <button onClick={() => handleExport("csv")} className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-lg transition-colors text-sm">
-                <FileText className="w-4 h-4" /> Export as CSV
-              </button>
-              <button onClick={() => handleExport("xlsx")} className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-medium rounded-lg transition-colors text-sm">
-                <FileSpreadsheet className="w-4 h-4" /> Export as XLSX
+              <button
+                onClick={handleExport}
+                disabled={isExporting}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-medium rounded-lg transition-colors text-sm cursor-pointer shadow-sm"
+              >
+                {isExporting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Exporting Products...</span>
+                  </>
+                ) : (
+                  <>
+                    <FileText className="w-4 h-4" />
+                    <span>Export Products as CSV</span>
+                  </>
+                )}
               </button>
             </div>
           </div>
         </div>
       </div>
-
     </div>
   );
 }

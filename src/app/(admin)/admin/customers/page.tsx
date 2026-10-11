@@ -407,9 +407,15 @@ export default function AllCustomersPage() {
         {/* Footer with Pagination */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4 px-6 py-4 border-t border-slate-200 bg-slate-50/50">
           <p className="text-xs text-slate-500">
-            Showing <strong className="text-slate-700">{startIndex}</strong> to{" "}
-            <strong className="text-slate-700">{endIndex}</strong> of{" "}
-            <strong className="text-slate-700">{total}</strong> results
+            {total === 0 ? (
+              "Showing 0 results"
+            ) : (
+              <>
+                Showing <strong className="text-slate-700">{startIndex}</strong> to{" "}
+                <strong className="text-slate-700">{endIndex}</strong> of{" "}
+                <strong className="text-slate-700">{total}</strong> results
+              </>
+            )}
           </p>
 
           <div className="flex items-center gap-1.5">

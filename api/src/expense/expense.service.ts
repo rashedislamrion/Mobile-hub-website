@@ -12,10 +12,21 @@ import {
   MarkExpensePaidDto,
 } from './dto/expense.dto';
 import { ExpenseStatus, Prisma, WalletTxnType } from '@prisma/client';
+import { Response } from 'express';
+import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
+import { BranchScopeService } from '../common/branch/branch-scope.service';
+import {
+  resolvePrivateFilePath,
+  streamLocalFile,
+} from '../common/upload/private-file.helper';
+import { storageService } from '../common/upload/storage.service';
 
 @Injectable()
 export class ExpenseService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private branchScopeService: BranchScopeService,
+  ) {}
 
   // ============================= CATEGORIES =============================
 
@@ -40,14 +51,20 @@ export class ExpenseService {
     });
 
     return categories.map((cat) => {
-      const thisMonthSpend = cat.expenses.reduce(
-        (acc, exp) => acc + Number(exp.amount),
+      const thisMonthSpent = cat.expenses.reduce(
+        (sum, e) => sum + Number(e.amount),
         0,
       );
-      const { expenses, ...rest } = cat;
+      const budget = cat.monthlyBudget ? Number(cat.monthlyBudget) : 0;
+      const budgetRemaining = budget > 0 ? Math.max(0, budget - thisMonthSpent) : null;
       return {
-        ...rest,
-        thisMonthSpend,
+        id: cat.id,
+        name: cat.name,
+        icon: cat.icon,
+        monthlyBudget: cat.monthlyBudget ? Number(cat.monthlyBudget) : null,
+        expenseCount: cat._count.expenses,
+        thisMonthSpent,
+        budgetRemaining,
       };
     });
   }
@@ -59,82 +76,89 @@ export class ExpenseService {
         _count: { select: { expenses: true } },
       },
     });
-    if (!cat)
-      throw new NotFoundException(`Expense category "${id}" not found.`);
+    if (!cat) throw new NotFoundException(`Expense Category "${id}" not found.`);
     return cat;
   }
 
   async createCategory(dto: CreateExpenseCategoryDto) {
-    try {
-      return await this.prisma.expenseCategory.create({
-        data: {
-          name: dto.name,
-          icon: dto.icon || null,
-          monthlyBudget:
-            dto.monthlyBudget !== undefined ? dto.monthlyBudget : null,
-        },
-      });
-    } catch (e: any) {
-      if (e.code === 'P2002') {
-        throw new ConflictException(
-          `Expense category "${dto.name}" already exists.`,
-        );
-      }
-      throw e;
+    const existing = await this.prisma.expenseCategory.findUnique({
+      where: { name: dto.name },
+    });
+    if (existing) {
+      throw new ConflictException(
+        'An expense category with this name already exists.',
+      );
     }
+    return this.prisma.expenseCategory.create({
+      data: {
+        name: dto.name,
+        icon: dto.icon || 'receipt',
+        monthlyBudget: dto.monthlyBudget ? new Prisma.Decimal(dto.monthlyBudget) : null,
+      },
+    });
   }
 
   async updateCategory(id: string, dto: UpdateExpenseCategoryDto) {
     await this.findOneCategory(id);
-    try {
-      return await this.prisma.expenseCategory.update({
-        where: { id },
-        data: {
-          name: dto.name,
-          icon: dto.icon !== undefined ? dto.icon || null : undefined,
-          monthlyBudget:
-            dto.monthlyBudget !== undefined ? dto.monthlyBudget : undefined,
-        },
-      });
-    } catch (e: any) {
-      if (e.code === 'P2002') {
-        throw new ConflictException(
-          `Expense category "${dto.name}" already exists.`,
-        );
-      }
-      throw e;
-    }
+    return this.prisma.expenseCategory.update({
+      where: { id },
+      data: {
+        name: dto.name,
+        icon: dto.icon,
+        monthlyBudget:
+          dto.monthlyBudget !== undefined
+            ? dto.monthlyBudget
+              ? new Prisma.Decimal(dto.monthlyBudget)
+              : null
+            : undefined,
+      },
+    });
   }
 
   async removeCategory(id: string) {
     const cat = await this.findOneCategory(id);
-    if (cat._count.expenses > 0) {
-      throw new ConflictException(
-        `Cannot delete category "${cat.name}" because it has ${cat._count.expenses} associated expense record(s).`,
-      );
+    const count = await this.prisma.expense.count({ where: { categoryId: id } });
+    if (count > 0) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        message: `Cannot delete expense category "${cat.name}". It has ${count} linked expense record(s). Reassign or delete those records first.`,
+        blockers: { expenses: count },
+      });
     }
     return this.prisma.expenseCategory.delete({ where: { id } });
   }
 
   // ============================= EXPENSES =============================
 
-  async findAllExpenses(query?: {
-    branch?: string;
-    category?: string;
-    status?: ExpenseStatus;
-    dateFrom?: string;
-    dateTo?: string;
-    search?: string;
-    page?: number;
-    limit?: number;
-  }) {
+  async findAllExpenses(
+    query?: {
+      branch?: string;
+      category?: string;
+      status?: ExpenseStatus;
+      dateFrom?: string;
+      dateTo?: string;
+      search?: string;
+      page?: number;
+      limit?: number;
+    },
+    user?: JwtPayload,
+  ) {
     const page = Math.max(1, Number(query?.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(query?.limit) || 20));
     const skip = (page - 1) * limit;
 
     const where: Prisma.ExpenseWhereInput = {};
 
-    if (query?.branch) where.branchId = query.branch;
+    // Branch scoping via unified service
+    const branchFilter = await this.branchScopeService.getBranchFilter(
+      user,
+      query?.branch,
+    );
+    if (branchFilter !== undefined) {
+      where.branchId = branchFilter;
+    }
+
     if (query?.category) where.categoryId = query.category;
     if (query?.status) where.status = query.status;
 
@@ -178,7 +202,7 @@ export class ExpenseService {
       this.prisma.expense.findMany({
         where: {
           createdAt: { gte: startOfMonth },
-          ...(query?.branch ? { branchId: query.branch } : {}),
+          ...(branchFilter !== undefined ? { branchId: branchFilter } : {}),
         },
         select: { amount: true, status: true },
       }),
@@ -214,7 +238,7 @@ export class ExpenseService {
     };
   }
 
-  async findOneExpense(id: string) {
+  async findOneExpense(id: string, user?: JwtPayload) {
     const exp = await this.prisma.expense.findUnique({
       where: { id },
       include: {
@@ -225,26 +249,48 @@ export class ExpenseService {
       },
     });
     if (!exp) throw new NotFoundException(`Expense record "${id}" not found.`);
+    if (user) {
+      await this.branchScopeService.validateBranchAccess(user, exp.branchId);
+    }
     return exp;
+  }
+
+  async streamAttachment(id: string, user: JwtPayload, res: Response) {
+    const exp = await this.prisma.expense.findUnique({
+      where: { id },
+      select: { id: true, branchId: true, attachmentUrl: true },
+    });
+    if (!exp) throw new NotFoundException(`Expense record "${id}" not found.`);
+
+    await this.branchScopeService.validateBranchAccess(user, exp.branchId);
+
+    if (!exp.attachmentUrl) {
+      throw new NotFoundException('No attachment associated with this expense.');
+    }
+
+    const resolved = resolvePrivateFilePath('expenses', exp.attachmentUrl);
+    if (!resolved) {
+      throw new NotFoundException('Attachment file not found on disk.');
+    }
+
+    streamLocalFile(resolved, res);
   }
 
   async createExpense(
     dto: CreateExpenseDto,
-    recordedById: string,
+    user: JwtPayload,
     attachmentUrl?: string,
   ) {
+    const recordedById = user.sub;
     const amount = Number(dto.amount);
     const referenceNo = `EXP-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
 
-    return this.prisma.$transaction(async (tx) => {
-      let branchId = dto.branchId;
-      if (!branchId) {
-        const defaultBranch = await tx.branch.findFirst();
-        if (!defaultBranch)
-          throw new NotFoundException('No branch found to assign expense.');
-        branchId = defaultBranch.id;
-      }
+    const branchId = await this.branchScopeService.determineCreateBranchId(
+      user,
+      dto.branchId,
+    );
 
+    return this.prisma.$transaction(async (tx) => {
       let walletTypeId = dto.walletTypeId;
       if (!walletTypeId) {
         const defaultWallet = await tx.walletType.findFirst();
@@ -254,11 +300,13 @@ export class ExpenseService {
 
       let walletTxn: any = null;
 
+      // If status is PAID, deduct from wallet
       if (dto.status === ExpenseStatus.PAID) {
         const wallet = await tx.walletType.findUnique({
           where: { id: walletTypeId },
         });
-        if (!wallet) throw new NotFoundException('Selected wallet not found.');
+        if (!wallet)
+          throw new NotFoundException('Selected expense wallet not found.');
 
         const currentBal = Number(wallet.currentBalance);
         if (currentBal < amount) {
@@ -275,11 +323,11 @@ export class ExpenseService {
 
         walletTxn = await tx.walletTransaction.create({
           data: {
-            walletTypeId: walletTypeId,
+            walletTypeId,
             type: WalletTxnType.WITHDRAWAL,
             amount,
             referenceNo: `TXN-${referenceNo}`,
-            note: `Payment for expense: ${dto.description}`,
+            note: `Expense: ${dto.description}`,
             recordedById,
             balanceAfter: newBal,
           },
@@ -289,13 +337,13 @@ export class ExpenseService {
       const expense = await tx.expense.create({
         data: {
           referenceNo,
+          amount,
+          description: dto.description,
+          status: dto.status || ExpenseStatus.PAID,
+          attachmentUrl: attachmentUrl || (dto as any).attachmentUrl || null,
           branchId,
           categoryId: dto.categoryId,
-          description: dto.description,
-          amount,
           walletTypeId,
-          status: dto.status || ExpenseStatus.PENDING,
-          attachmentUrl: attachmentUrl || (dto as any).attachmentUrl || null,
           recordedById,
         },
         include: {
@@ -310,12 +358,12 @@ export class ExpenseService {
     });
   }
 
-  async markPaid(id: string, dto: MarkExpensePaidDto, recordedById: string) {
-    const exp = await this.findOneExpense(id);
+  async markPaid(id: string, dto: MarkExpensePaidDto, user: JwtPayload) {
+    const exp = await this.findOneExpense(id, user);
+    const recordedById = user.sub;
+
     if (exp.status === ExpenseStatus.PAID) {
-      throw new BadRequestException(
-        'This expense has already been marked as PAID.',
-      );
+      throw new BadRequestException('This expense is already marked as PAID.');
     }
 
     const amount = Number(exp.amount);
@@ -376,8 +424,18 @@ export class ExpenseService {
     });
   }
 
-  async removeExpense(id: string) {
-    await this.findOneExpense(id);
+  async removeExpense(id: string, user?: JwtPayload) {
+    const exp = await this.findOneExpense(id, user);
+    if (exp.status === ExpenseStatus.PAID) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        message: `Cannot delete paid expense "${exp.referenceNo}". It has ledger/financial impact.`,
+      });
+    }
+    if (exp.attachmentUrl) {
+      await storageService.safeUnlink(exp.attachmentUrl);
+    }
     return this.prisma.expense.delete({ where: { id } });
   }
 }

@@ -36,6 +36,7 @@ import { apiGet, apiPatch, apiDelete } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { AdminTableState } from "@/components/admin/AdminTableState";
 import {
   Dialog,
   DialogContent,
@@ -408,23 +409,18 @@ export default function AdminServicingPage() {
 
       {/* Table */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-        {loading ? (
-          <div className="p-12 flex flex-col items-center justify-center text-slate-500">
-            <Loader2 className="w-8 h-8 animate-spin text-emerald-600 mb-4" />
-            <p>Loading service jobs...</p>
-          </div>
-        ) : error ? (
-          <div className="p-12 flex flex-col items-center justify-center text-red-500">
-            <AlertCircle className="w-8 h-8 mb-4" />
-            <p>{error}</p>
-          </div>
-        ) : jobs.length === 0 ? (
-          <div className="p-12 flex flex-col items-center justify-center text-slate-500">
-            <Wrench className="w-12 h-12 mb-4 opacity-20" />
-            <h3 className="text-lg font-medium text-slate-800 mb-1">No service jobs found</h3>
-            <p>Adjust your filters or create a new job.</p>
-          </div>
-        ) : (
+        <AdminTableState
+          isLoading={loading}
+          error={error}
+          isEmpty={jobs.length === 0}
+          onRetry={fetchJobs}
+          loadingRows={5}
+          emptyTitle="No service jobs found"
+          emptyDescription="Adjust your filters or create a new job."
+          emptyActionLabel="Create New Job"
+          onEmptyAction={() => router.push("/admin/servicing/create")}
+          emptyIcon={<Wrench className="w-8 h-8 text-slate-300" />}
+        >
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm whitespace-nowrap">
               <thead className="bg-slate-50 border-b border-slate-200 text-slate-600">
@@ -499,7 +495,7 @@ export default function AdminServicingPage() {
               </tbody>
             </table>
           </div>
-        )}
+        </AdminTableState>
       </div>
 
       {/* Detail Modal */}

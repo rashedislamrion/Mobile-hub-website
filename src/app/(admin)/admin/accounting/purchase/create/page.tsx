@@ -25,6 +25,7 @@ import {
   Smartphone,
   Headphones,
   Sparkles,
+  RefreshCw,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -37,6 +38,8 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { apiGet, apiPost, getImageUrl, getStaffToken, API_BASE_URL } from "@/lib/api-client";
+import { SearchableSelect } from "@/components/ui/searchable-select";
+import { useStaffAuth } from "@/context/AuthContext";
 import Image from "next/image";
 
 interface SupplierItem {
@@ -131,13 +134,35 @@ interface WalletPaymentRow {
 
 export default function CreatePurchaseOrderPage() {
   const { setTitle, setBadge, setDateFilter, selectedBranchId, branches } = useAdminPage();
+  const { user } = useStaffAuth();
   const router = useRouter();
+
+  const isGlobalAdmin = Boolean(
+    user?.isGlobal ||
+    user?.role?.scope === "GLOBAL" ||
+    user?.role?.name?.toLowerCase().includes("super admin") ||
+    user?.role?.name?.toLowerCase() === "admin"
+  );
+
+  const userBranches = useMemo(() => {
+    if (isGlobalAdmin) return branches;
+    if (user?.allowedBranches && user.allowedBranches.length > 0) {
+      return branches.filter((b) => user.allowedBranches?.some((ab) => ab.id === b.id));
+    }
+    if (user?.branchId) {
+      return branches.filter((b) => b.id === user.branchId);
+    }
+    return branches;
+  }, [isGlobalAdmin, branches, user]);
+
+  const isSingleBranchLocked = !isGlobalAdmin && userBranches.length === 1;
 
   // Master Data
   const [suppliers, setSuppliers] = useState<SupplierItem[]>([]);
   const [wallets, setWallets] = useState<WalletItem[]>([]);
   const [categories, setCategories] = useState<{ id: string; name: string; slug: string }[]>([]);
   const [products, setProducts] = useState<ProductItem[]>([]);
+  const [masterDataErrors, setMasterDataErrors] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -271,14 +296,25 @@ export default function CreatePurchaseOrderPage() {
     }
   };
 
-  // Branch Selection Sync
+  // Branch Selection Sync - Enforces Task 2c Rules
   useEffect(() => {
-    if (selectedBranchId && selectedBranchId !== "all") {
-      setPurchaseBranchId(selectedBranchId);
-    } else if (branches.length > 0 && !purchaseBranchId) {
-      setPurchaseBranchId(branches[0].id);
+    if (isSingleBranchLocked && userBranches[0]) {
+      setPurchaseBranchId(userBranches[0].id);
+    } else if (isGlobalAdmin) {
+      if (selectedBranchId && selectedBranchId !== "all") {
+        setPurchaseBranchId(selectedBranchId);
+      } else {
+        // Super Admin with "All Branches" -> empty placeholder, required
+        setPurchaseBranchId("");
+      }
+    } else if (userBranches.length > 1) {
+      if (selectedBranchId && selectedBranchId !== "all" && userBranches.some((b) => b.id === selectedBranchId)) {
+        setPurchaseBranchId(selectedBranchId);
+      } else {
+        setPurchaseBranchId("");
+      }
     }
-  }, [selectedBranchId, branches, purchaseBranchId]);
+  }, [isGlobalAdmin, isSingleBranchLocked, userBranches, selectedBranchId]);
 
   // Shipment Line Items
   const [lineItems, setLineItems] = useState<ShipmentLineItem[]>([]);
@@ -300,24 +336,33 @@ export default function CreatePurchaseOrderPage() {
     setDateFilter("");
   }, [setTitle, setBadge, setDateFilter]);
 
-  // Initial Data Fetching
+  // Initial Data Fetching - Resilient via Promise.allSettled with visible error state
   const loadMasterData = useCallback(async () => {
     try {
       setIsLoading(true);
-      const [supRes, walletRes, catRes, prodRes] = await Promise.all([
+      setMasterDataErrors([]);
+      const [supRes, walletRes, catRes, prodRes] = await Promise.allSettled([
         apiGet<{ data: SupplierItem[] }>("/suppliers", { limit: 100 }),
         apiGet<WalletItem[]>("/wallet-types"),
-        apiGet<any[]>("/category/tree"),
+        apiGet<any[]>("/categories/tree"),
         apiGet<{ data: ProductItem[] }>("/products", { limit: 150 }),
       ]);
 
-      if (supRes?.data) {
-        setSuppliers(supRes.data);
+      const errors: string[] = [];
+
+      if (supRes.status === "fulfilled" && supRes.value?.data) {
+        setSuppliers(supRes.value.data);
+      } else {
+        errors.push("Suppliers");
       }
-      if (Array.isArray(walletRes)) {
-        setWallets(walletRes);
+
+      if (walletRes.status === "fulfilled" && Array.isArray(walletRes.value)) {
+        setWallets(walletRes.value);
+      } else {
+        errors.push("Wallets");
       }
-      if (Array.isArray(catRes)) {
+
+      if (catRes.status === "fulfilled" && Array.isArray(catRes.value)) {
         const flat: { id: string; name: string; slug: string }[] = [];
         const traverse = (items: any[]) => {
           items.forEach((item) => {
@@ -325,13 +370,24 @@ export default function CreatePurchaseOrderPage() {
             if (item.children?.length) traverse(item.children);
           });
         };
-        traverse(catRes);
+        traverse(catRes.value);
         setCategories(flat);
+      } else {
+        errors.push("Categories");
       }
-      if (prodRes?.data) {
-        setProducts(prodRes.data);
+
+      if (prodRes.status === "fulfilled" && prodRes.value?.data) {
+        setProducts(prodRes.value.data);
+      } else {
+        errors.push("Products");
+      }
+
+      if (errors.length > 0) {
+        setMasterDataErrors(errors);
+        toast.error(`Failed to load ${errors.join(", ")}. Please click Retry.`);
       }
     } catch (err: any) {
+      setMasterDataErrors(["Purchase configuration data"]);
       toast.error(err.message || "Failed to load purchase configuration data");
     } finally {
       setIsLoading(false);
@@ -351,7 +407,7 @@ export default function CreatePurchaseOrderPage() {
     return Number(currentSupplier?.advanceBalance || 0);
   }, [currentSupplier]);
 
-  // Filtered Products Catalog
+  // Filtered Products Catalog with Token Matching
   const filteredProducts = useMemo(() => {
     return products.filter((p) => {
       // Purchase Type Filter
@@ -396,10 +452,24 @@ export default function CreatePurchaseOrderPage() {
         if (!isAccessory && (p as any).productCategory && (p as any).productCategory !== "ACCESSORY") return false;
       }
 
+      // Token-based matching on productSearch
+      const searchTokens = productSearch.toLowerCase().trim().split(/\s+/).filter(Boolean);
       const matchSearch =
-        !productSearch.trim() ||
-        p.name.toLowerCase().includes(productSearch.toLowerCase()) ||
-        p.slug.toLowerCase().includes(productSearch.toLowerCase());
+        searchTokens.length === 0 ||
+        searchTokens.every((token) => {
+          const inName = p.name.toLowerCase().includes(token);
+          const inCode = ((p as any).code || "").toLowerCase().includes(token);
+          const inSlug = (p.slug || "").toLowerCase().includes(token);
+          const inBrand = (p.brand?.name || "").toLowerCase().includes(token);
+          const inCategory = (p.category?.name || "").toLowerCase().includes(token);
+          const inVariants = (p.variants || []).some(
+            (v: any) =>
+              (v.sku || "").toLowerCase().includes(token) ||
+              (v.color || "").toLowerCase().includes(token) ||
+              (v.quality || "").toLowerCase().includes(token)
+          );
+          return inName || inCode || inSlug || inBrand || inCategory || inVariants;
+        });
 
       const matchCategory =
         selectedCategorySlug === "all" || p.category?.slug === selectedCategorySlug;
@@ -748,6 +818,10 @@ export default function CreatePurchaseOrderPage() {
 
   // Submit Purchase Order
   const handleSubmitPurchase = async (status: "ORDERED" | "DRAFT" | "RECEIVED") => {
+    if (!purchaseBranchId) {
+      toast.error("Please select a Receiving Branch");
+      return;
+    }
     if (!selectedSupplierId) {
       toast.error("Please select a Supplier");
       return;
@@ -836,9 +910,7 @@ export default function CreatePurchaseOrderPage() {
           amount: Number(w.amount),
         }));
 
-      const targetBranch =
-        purchaseBranchId ||
-        (selectedBranchId && selectedBranchId !== "all" ? selectedBranchId : branches[0]?.id || undefined);
+      const targetBranch = purchaseBranchId;
 
       const payload = {
         branchId: targetBranch,
@@ -863,13 +935,7 @@ export default function CreatePurchaseOrderPage() {
         try {
           const docFormData = new FormData();
           docFormData.append("document", purchaseDocument);
-          await fetch(`${API_BASE_URL}/purchase-orders/${res.id}/document`, {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${getStaffToken() || ""}`,
-            },
-            body: docFormData,
-          });
+          await apiPost(`/purchase-orders/${res.id}/document`, docFormData, { authScope: "STAFF" });
         } catch (docErr) {
           console.warn("Document upload failed:", docErr);
         }
@@ -939,6 +1005,30 @@ export default function CreatePurchaseOrderPage() {
         </div>
       </div>
 
+      {masterDataErrors.length > 0 && (
+        <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-rose-900 shadow-sm">
+          <div className="flex items-center gap-3">
+            <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
+            <div>
+              <p className="font-semibold text-sm">Incomplete Master Data</p>
+              <p className="text-xs text-rose-600">
+                Could not load: <span className="font-medium">{masterDataErrors.join(", ")}</span>. Dropdowns or catalog may be missing items.
+              </p>
+            </div>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={loadMasterData}
+            disabled={isLoading}
+            className="border-rose-300 text-rose-700 bg-white hover:bg-rose-100 shrink-0 rounded-xl"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isLoading ? "animate-spin" : ""}`} /> Retry Loading
+          </Button>
+        </div>
+      )}
+
       {/* CARD 1: PURCHASE DETAILS */}
       <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 space-y-5">
         <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
@@ -1001,18 +1091,19 @@ export default function CreatePurchaseOrderPage() {
               Supplier <span className="text-red-500">*</span>
             </label>
             <div className="flex items-center gap-2">
-              <select
+              <SearchableSelect
+                options={suppliers.map((s) => ({
+                  value: s.id,
+                  label: s.name,
+                  secondaryText: `${s.companyName ? `(${s.companyName}) ` : ""}${s.phone || ""}`.trim(),
+                }))}
                 value={selectedSupplierId}
-                onChange={(e) => setSelectedSupplierId(e.target.value)}
-                className="w-full h-11 px-3.5 rounded-xl border border-slate-200 bg-white text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
-              >
-                <option value="">Select Supplier...</option>
-                {suppliers.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name} {s.companyName ? `(${s.companyName})` : ""} - {s.phone}
-                  </option>
-                ))}
-              </select>
+                onChange={(val) => setSelectedSupplierId(val)}
+                placeholder="Select Supplier..."
+                searchPlaceholder="Search supplier name, company, or phone..."
+                required
+                className="flex-1"
+              />
 
               <button
                 type="button"
@@ -1039,17 +1130,18 @@ export default function CreatePurchaseOrderPage() {
             <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
               Receiving Branch <span className="text-red-500">*</span>
             </label>
-            <select
+            <SearchableSelect
+              options={userBranches.map((b) => ({
+                value: b.id,
+                label: `${b.name}${b.code ? ` (${b.code})` : ""}${b.isHeadquarters ? " ★ HQ" : ""}`,
+              }))}
               value={purchaseBranchId}
-              onChange={(e) => setPurchaseBranchId(e.target.value)}
-              className="w-full h-11 px-3.5 rounded-xl border border-slate-200 bg-white text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
-            >
-              {branches.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name} {b.code ? `(${b.code})` : ""} {b.isHeadquarters ? "★ HQ" : ""}
-                </option>
-              ))}
-            </select>
+              onChange={(val) => setPurchaseBranchId(val)}
+              placeholder={isSingleBranchLocked ? (userBranches[0]?.name || "Receiving Branch") : "Select Receiving Branch..."}
+              disabled={isSingleBranchLocked}
+              required
+              className="w-full"
+            />
           </div>
 
           {/* Invoice Number */}

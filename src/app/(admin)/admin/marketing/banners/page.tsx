@@ -10,7 +10,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { apiGet, apiPatch, apiDelete, getImageUrl } from "@/lib/api-client";
 import { Skeleton } from "@/components/ui/skeleton";
+import { AdminTableState } from "@/components/admin/AdminTableState";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 export interface BannerRecord {
   id: string;
@@ -22,9 +24,11 @@ export interface BannerRecord {
 }
 
 export default function BannersPage() {
+  const router = useRouter();
   const { setTitle, setBadge, setDateFilter } = useAdminPage();
   const [banners, setBanners] = useState<BannerRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   // Edit modal state
   const [editingBanner, setEditingBanner] = useState<BannerRecord | null>(null);
@@ -34,11 +38,13 @@ export default function BannersPage() {
 
   const fetchBanners = async () => {
     setIsLoading(true);
+    setError(null);
     try {
       const data = await apiGet<BannerRecord[]>("/banners");
       setBanners(data || []);
     } catch (e: any) {
       console.error(e);
+      setError(e.message || "Failed to load banners");
       toast.error(e.message || "Failed to load banners");
     } finally {
       setIsLoading(false);
@@ -57,6 +63,7 @@ export default function BannersPage() {
     const nextStatus = banner.status === "ACTIVE" ? "INACTIVE" : "ACTIVE";
     try {
       await apiPatch(`/banners/${banner.id}`, { status: nextStatus });
+      fetch("/api/revalidate?path=/").catch(() => {});
       toast.success(`Banner status updated`);
       setBanners((prev) =>
         prev.map((b) => (b.id === banner.id ? { ...b, status: nextStatus } : b))
@@ -82,6 +89,7 @@ export default function BannersPage() {
         title: editTitle.trim(),
         imageUrl: editImageUrl.trim(),
       });
+      fetch("/api/revalidate?path=/").catch(() => {});
       toast.success("Banner updated successfully");
       setEditingBanner(null);
       fetchBanners();
@@ -96,6 +104,7 @@ export default function BannersPage() {
     if (!confirm("Are you sure you want to delete this banner?")) return;
     try {
       await apiDelete(`/banners/${bannerId}`);
+      fetch("/api/revalidate?path=/").catch(() => {});
       toast.success("Banner deleted");
       if (editingBanner?.id === bannerId) setEditingBanner(null);
       fetchBanners();
@@ -137,23 +146,19 @@ export default function BannersPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {isLoading ? (
-              <tr>
-                <td colSpan={5} className="py-12 text-center text-slate-400">
-                  <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2 text-emerald-600" />
-                  Loading banners...
-                </td>
-              </tr>
-            ) : banners.length === 0 ? (
-              <tr>
-                <td colSpan={5} className="py-16 text-center text-slate-400">
-                  <ImageIcon className="w-10 h-10 text-slate-300 mx-auto mb-2" />
-                  <p className="text-sm font-semibold text-slate-600">No promotional banners found</p>
-                  <p className="text-xs text-slate-400 mt-0.5">Click "+ Create New" above to add your first banner</p>
-                </td>
-              </tr>
-            ) : (
-              banners.map((banner, index) => (
+            <AdminTableState
+              isLoading={isLoading}
+              error={error}
+              isEmpty={banners.length === 0}
+              onRetry={fetchBanners}
+              colSpan={5}
+              loadingRows={4}
+              emptyTitle="No promotional banners found"
+              emptyDescription="Click '+ Create New' above to add your first banner."
+              emptyActionLabel="Create Banner"
+              onEmptyAction={() => router.push("/admin/marketing/banners/create")}
+            >
+              {banners.map((banner, index) => (
                 <tr key={banner.id} className="hover:bg-slate-50/70 transition-colors">
                   {/* SL */}
                   <td className="py-3.5 px-4 text-center font-bold text-slate-400">
@@ -210,8 +215,8 @@ export default function BannersPage() {
                     </div>
                   </td>
                 </tr>
-              ))
-            )}
+              ))}
+            </AdminTableState>
           </tbody>
         </table>
       </div>

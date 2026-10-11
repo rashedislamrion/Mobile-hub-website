@@ -69,6 +69,55 @@ export class PermissionsGuard implements CanActivate {
         'Access restricted: Only Global Administrators can access or modify system-wide settings.',
       );
     }
+    // STEP 3: Branch scoping check for client-sent branch header/query
+    const requestedBranch =
+      (request.headers['x-branch-id'] as string) ||
+      (request.query?.branch as string) ||
+      (request.query?.branchId as string);
+
+    if (
+      requestedBranch &&
+      requestedBranch !== 'ALL' &&
+      role?.scope !== 'GLOBAL'
+    ) {
+      const isPrimary = user.branchId === requestedBranch;
+      if (!isPrimary) {
+        const staffAccess = await this.prisma.staffBranchAccess.findFirst({
+          where: {
+            staffId: user.sub,
+            branchId: requestedBranch,
+          },
+        });
+        if (!staffAccess) {
+          throw new ForbiddenException(
+            'You do not have access to the selected branch.',
+          );
+        }
+      }
+    }
+
+    const BRANCH_SCOPED_MODULES: ModuleName[] = [
+      ModuleName.ORDERS,
+      ModuleName.PURCHASE,
+      ModuleName.EXPENSE,
+      ModuleName.SALES,
+      ModuleName.SALES_RETURNS,
+      ModuleName.EXCHANGES,
+      ModuleName.STOCK_ADJUSTMENTS,
+      ModuleName.REPORT,
+      ModuleName.HRM,
+    ];
+
+    // Auto-propagate header x-branch-id to query.branch ONLY for branch-scoped modules
+    if (
+      BRANCH_SCOPED_MODULES.includes(required.module) &&
+      request.headers['x-branch-id'] &&
+      !request.query?.branch
+    ) {
+      if (!request.query) request.query = {};
+      request.query.branch = request.headers['x-branch-id'];
+    }
+
     if (role?.scope === 'OWN_BRANCH' && required.branchParam) {
       const targetBranchId =
         request.params?.[required.branchParam] ??

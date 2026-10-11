@@ -5,6 +5,7 @@ import {
   DeleteObjectCommand,
 } from '@aws-sdk/client-s3';
 import * as fs from 'fs';
+import { join, resolve } from 'path';
 
 @Injectable()
 export class StorageService {
@@ -56,8 +57,9 @@ export class StorageService {
   }
 
   /**
-   * Uploads a file to Cloudflare R2 (or retains local disk path if R2 is not configured)
-   * Returns the public URL to store in the database.
+   * Uploads a file to Cloudflare R2 (or retains local disk path if R2 is not configured
+   * or if the file belongs to a private subfolder).
+   * Returns the URL/path to store in the database.
    */
   async uploadFile(
     file: Express.Multer.File,
@@ -68,6 +70,12 @@ export class StorageService {
     }
 
     const localUrl = `/uploads/${subfolder}/${file.filename}`;
+
+    // Private subfolders MUST remain on local disk under PRIVATE_UPLOAD_ROOT
+    const privateSubfolders = ['staff-documents', 'purchase-documents', 'expenses'];
+    if (privateSubfolders.includes(subfolder.replace(/[^a-zA-Z0-9_-]/g, ''))) {
+      return localUrl;
+    }
 
     if (!this.isR2Configured()) {
       return localUrl;
@@ -129,7 +137,7 @@ export class StorageService {
   }
 
   /**
-   * Deletes a file from R2 or local disk if needed.
+   * Deletes a file from R2 if configured.
    */
   async deleteFile(fileUrl: string): Promise<void> {
     if (!fileUrl) return;
@@ -153,6 +161,54 @@ export class StorageService {
           `Failed to delete object from R2 (${fileUrl}): ${err.message}`,
         );
       }
+    }
+  }
+
+  /**
+   * Safely unlinks a file from local disk or R2 bucket.
+   * Enforces path containment to prevent directory traversal.
+   * Never throws exceptions.
+   */
+  async safeUnlink(fileUrlOrPath: string | null | undefined): Promise<boolean> {
+    if (!fileUrlOrPath) return false;
+
+    // Handle R2 URLs
+    if (fileUrlOrPath.startsWith('http://') || fileUrlOrPath.startsWith('https://')) {
+      await this.deleteFile(fileUrlOrPath);
+      return true;
+    }
+
+    try {
+      let relativePath = fileUrlOrPath.replace(/^\/?uploads\//, '').replace(/^\//, '');
+      const parts = relativePath.split('/');
+      if (parts.length < 2) return false;
+
+      const subfolder = parts[0];
+      const filename = parts.slice(1).join('/');
+
+      const uploadRoot = process.env.UPLOAD_ROOT || join(process.cwd(), 'uploads');
+      const privateRoot = process.env.PRIVATE_UPLOAD_ROOT || join(process.cwd(), 'private-uploads');
+
+      const candidatePaths = [
+        join(uploadRoot, subfolder, filename),
+        join(privateRoot, subfolder, filename),
+      ];
+
+      for (const targetPath of candidatePaths) {
+        const resolved = resolve(targetPath);
+        const isWithinUpload = resolved.startsWith(resolve(uploadRoot));
+        const isWithinPrivate = resolved.startsWith(resolve(privateRoot));
+
+        if ((isWithinUpload || isWithinPrivate) && fs.existsSync(resolved)) {
+          fs.unlinkSync(resolved);
+          this.logger.log(`Safely unlinked local file: ${resolved}`);
+          return true;
+        }
+      }
+      return false;
+    } catch (err: any) {
+      this.logger.warn(`Failed to safely unlink file (${fileUrlOrPath}): ${err.message}`);
+      return false;
     }
   }
 }
